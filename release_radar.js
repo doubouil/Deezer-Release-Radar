@@ -394,6 +394,16 @@ function set_css() {
 .release_radar_song_info_div a {
     font-size: 16px;
 }
+.release_radar_song_info_div.is_new a::before {
+    content: "";
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background-color: red;
+    margin-right: 5px;
+}
+
 .release_radar_song_info_div div {
     color: var(--tempo-colors-text-neutral-secondary-default);
     font-size: 14px;
@@ -446,20 +456,16 @@ function create_new_releases_divs(new_releases, main_btn) {
             amount_new_songs++;
             main_btn.classList.toggle("has_new", true)
 
-            const is_new_svg = document.createElement("svg");
-            top_info_div.innerHTML = `
-            <svg height="12" width="68" style="position: absolute;">
-              <circle r="3" cx="65" cy="8" fill="red" style=""></circle>
-            </svg>`;
+            song_info_div.classList.toggle("is_new", true);
 
             release_li.onmouseover = () => {
                 release_li.onmouseover = null;
                 amount_new_songs--;
+
                 main_btn.classList.toggle("has_new", amount_new_songs > 0)
+                song_info_div.classList.toggle("is_new", false);
 
                 cache.has_seen[release.id] = true;
-
-                top_info_div.querySelector("svg").remove();
                 set_cache(cache);
             }
         }
