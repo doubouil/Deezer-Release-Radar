@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @match        https://www.deezer.com/*
-// @version      1.0
+// @version      1.1
 // @author       Bababoiiiii
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
+// @match        https://www.deezer.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
@@ -404,6 +405,12 @@ function set_css() {
     margin-top: 8px;
 }
 
+.release_radar_last_checked_span {
+    font-size: 11px;
+    color: var(--color-light-grey-800);
+    padding: 5px 15px;
+}
+
 `;
 
     GM_addStyle(css);
@@ -521,7 +528,7 @@ function create_main_div() {
 
         const update_interval_label = create_setting("Update Cooldown", "The time inbetween scans for new songs (in hours).", "update_cooldown_hours");
         const max_song_label = create_setting("Max. Songs", "The maximum amount of songs displayed at once. Only applies after a new scan.", "max_song_count");
-        const max_song_age_label = create_setting("Max. Song Age", "The maximum age of a displayed song (in days). Only applies after a new scan.", "max_song_age");
+        const max_song_age_label = create_setting("Max. Song Age", "The maximum age of a displayed song (in days). This affects how many requests are made, so keep it low to avoid performance/error issues. Only applies after a new scan.", "max_song_age");
 
         const open_in_app_label = document.createElement("label");
         open_in_app_label.textContent = "App";
@@ -553,7 +560,15 @@ function create_main_div() {
 
     header_wrapper_div.append(header_span, reload_button, settings_button);
 
-    popper_div.append(header_wrapper_div, main_div);
+    const last_checked_span = document.createElement("span");
+    last_checked_span.className = "release_radar_last_checked_span";
+    last_checked_span.textContent = `Last Update: ${time_ago(cache[user_id].last_checked)} ago`;
+    setInterval(() => {
+        last_checked_span.textContent = `Last Update: ${time_ago(cache[user_id].last_checked)} ago`;
+    }, 60000);
+
+
+    popper_div.append(header_wrapper_div, main_div, last_checked_span);
     wrapper_div.append(popper_div, arrow_div);
     return [wrapper_div, main_div];
 }
