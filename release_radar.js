@@ -568,10 +568,6 @@ function create_main_div() {
 
     const last_checked_span = document.createElement("span");
     last_checked_span.className = "release_radar_last_checked_span";
-    last_checked_span.textContent = `Last Update: ${time_ago(cache[user_id].last_checked)} ago`;
-    setInterval(() => {
-        last_checked_span.textContent = `Last Update: ${time_ago(cache[user_id].last_checked)} ago`;
-    }, 60000);
 
 
     popper_div.append(header_wrapper_div, main_div, last_checked_span);
@@ -579,7 +575,7 @@ function create_main_div() {
     return [wrapper_div, main_div];
 }
 
-function create_main_btn(main_div) {
+function create_main_btn(wrapper_div) {
     const parent_div = document.createElement("div");
 
     const main_btn = document.createElement("button");
@@ -601,9 +597,12 @@ function create_main_btn(main_div) {
 
     parent_div.appendChild(main_btn);
 
-
+    const last_checked_span = wrapper_div.querySelector("span.release_radar_last_checked_span");
     main_btn.onclick = () => {
-        main_div.classList.toggle("hide");
+        wrapper_div.classList.toggle("hide");
+        if (!wrapper_div.classList.contains("hide")) {
+            last_checked_span.textContent = `Last Update: ${time_ago(cache[user_id].last_checked)} ago`;
+        }
     }
     return [parent_div, main_btn];
 }
@@ -696,7 +695,12 @@ async function main() {
             }
         }, 10);
 
-        parent.querySelectorAll("div[class='popper-wrapper topbar-action']").forEach(e => e.addEventListener("click", () => wrapper_div.classList.toggle("hide", true)))
+        parent.querySelectorAll("div[class='popper-wrapper topbar-action']").forEach(e => e.addEventListener("click", (e) => {
+            console.log(e);
+            if (!event.keepOpen) {
+                wrapper_div.classList.toggle("hide", true)
+            }
+        }))
         parent.insertBefore(parent_div, parent.querySelector("div:nth-child(2)"));
         log("UI initialized");
     }
