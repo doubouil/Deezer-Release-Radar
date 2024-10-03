@@ -9,7 +9,6 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
-// @grant        GM_addValueChangeListener
 // ==/UserScript==
 
 // TODO:
@@ -19,7 +18,7 @@
 "use strict";
 
 function log(...args) {
-    console.log("[Deezer Release Radar]", ...args)
+    console.log("[Deezer Release Radar]", ...args);
 }
 
 // data stuff
@@ -79,7 +78,7 @@ async function get_releases(auth_token, artist_id, cursor=null) {
             "operationName": "ArtistDiscographyByType",
             "variables": {
                 "artistId": artist_id,
-                "nb": Math.floor(config.max_song_age/2), // 1 song every 2 days to try to get as little songs as possible, but also try to avoid multiple requests
+                "nb": Math.floor(config.max_song_age/7), // 1 release every week to try to get as little songs as possible, but also try to avoid multiple requests
                 "cursor": cursor,
                 "subType": null,
                 "roles": ["MAIN"],
@@ -91,12 +90,14 @@ async function get_releases(auth_token, artist_id, cursor=null) {
         "method": "POST",
     });
     const resp = await r.json();
-    return [resp.data.artist.albums.edges, resp.data.artist.albums.pageInfo.endCursor.hasNextPage, resp.data.artist.albums.pageInfo.endCursor];
+    return [resp.data.artist.albums.edges, resp.data.artist.albums.pageInfo.hasNextPage, resp.data.artist.albums.pageInfo.endCursor];
 }
 
 async function get_new_releases(auth_token, api_token, artist_ids) {
     const new_releases = [];
     const current_time = Date.now();
+    let current_oldest_song_which_got_added_time  = current_time;
+
     const amount_of_songs_in_each_album_promises = [];
 
     async function process_artist_batch(batch_artist_ids) {
@@ -112,9 +113,26 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
                 for (let release of releases) {
                     release.node.releaseDate = new Date(release.node.releaseDate).getTime();
 
+                    // stop requesting songs if the song is older than the age limit
                     if (current_time - release.node.releaseDate > 1000 * 60 * 60 * 24 * config.max_song_age) {
+                        next_page = null;
                         break;
                     }
+
+                    // OR if we already hit the amount limit and the song is older than the oldest song (would get removed anyways)
+                    // this doesnt entirely remove the list splicing since younger songs can still be added
+                    // this optimisation is really small and often doesnt affect anything, due to the fact that we can get most artists recent releases in 1 request
+                    // the next step to this optimisation would be to get the oldest song in the list which is within the amount limit and remove older songs
+                    // we would need to keep track of every song age and constantly update a list (?) and stuff, idk how exactly
+                    // the smaller the time the older the song
+                    if (current_oldest_song_which_got_added_time > release.node.releaseDate) {
+                        if (new_releases.length >= config.max_song_count) {
+                            next_page = null;
+                            break;
+                        }
+                        current_oldest_song_which_got_added_time = release.node.releaseDate;
+                    }
+
 
                     const new_release = {
                         artists: release.node.contributors.edges.map(e => e.node.name),
@@ -148,7 +166,6 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
     await Promise.all(amount_of_songs_in_each_album_promises);
 
     new_releases.sort((a, b) => b.release_date - a.release_date); // sort newest songs first
-
     return new_releases.slice(0, config.max_song_count);
 }
 
@@ -163,7 +180,6 @@ function set_cache(data) {
 
 function get_config() {
     return GM_getValue("config", {
-        update_cooldown_hours: 12,
         max_song_count: 25,
         max_song_age: 90,
         open_in_app: false
@@ -227,6 +243,13 @@ function time_ago(unix_timestamp, capitalize=false) {
 
     time_ago = Math.floor(difference / milliseconds_in_a_year);
     return `${time_ago} ${pluralize(capitalize ? "Year" : "year", time_ago)}`;
+}
+
+function is_after_utc_midnight(unix_timestamp) {
+    let now = new Date(unix_timestamp);
+    let utc_midnight = new Date( Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) ); // get todays 00:00 UTC
+
+    return unix_timestamp > utc_midnight;
 }
 
 // data stuff end
@@ -324,18 +347,18 @@ function set_css() {
 }
 
 .release_radar_main_div_header_div div {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 0.3fr) minmax(0, 0.3fr) minmax(0, 0.2fr);
     margin-top: 10px;
-    font-size: 11.5px;
-    font-weight: normal
+    font-size: 12px;
+    font-weight: normal;
 }
 
 .release_radar_main_div_header_div div>label {
     display: flex;
     flex-direction: column;
-    width: 31%;
     color: var(--tempo-colors-text-neutral-secondary-default);
-    margin-right: 5px;
+    margin-right: 10px;
     cursor: text;
 }
 
@@ -353,6 +376,7 @@ function set_css() {
 }
 .release_radar_main_div_header_div div>label>input[type='checkbox'] {
     height: 25px;
+    width: 25px;
 }
 
 .release_li {
@@ -433,8 +457,12 @@ function create_new_releases_divs(new_releases, main_btn) {
 
         const top_info_div = document.createElement("div");
 
+        const image_div = document.createElement("div");
+
         const release_img = document.createElement("img");
         release_img.src = release.cover_img;
+
+        image_div.append(release_img);
 
         const song_info_div = document.createElement("div");
         song_info_div.className = "release_radar_song_info_div";
@@ -470,7 +498,7 @@ function create_new_releases_divs(new_releases, main_btn) {
             }
         }
 
-        top_info_div.append(release_img, song_info_div);
+        top_info_div.append(image_div, song_info_div);
 
         release_li.append(top_info_div, bottom_info_div);
         return release_li;
@@ -532,7 +560,6 @@ function create_main_div() {
 
         settings_wrapper = document.createElement("div");
 
-        const update_interval_label = create_setting("Update Cooldown", "The time inbetween scans for new songs (in hours).", "update_cooldown_hours");
         const max_song_label = create_setting("Max. Songs", "The maximum amount of songs displayed at once. Only applies after a new scan.", "max_song_count");
         const max_song_age_label = create_setting("Max. Song Age", "The maximum age of a displayed song (in days). This affects how many requests are made, so keep it low to avoid performance/error issues. Only applies after a new scan.", "max_song_age");
 
@@ -550,7 +577,7 @@ function create_main_div() {
         }
         open_in_app_label.appendChild(open_in_app_input)
 
-        settings_wrapper.append(update_interval_label, max_song_label, max_song_age_label, open_in_app_label);
+        settings_wrapper.append(max_song_label, max_song_age_label, open_in_app_label);
         header_wrapper_div.append(settings_wrapper);
     }
 
@@ -599,9 +626,9 @@ function create_main_btn(wrapper_div) {
 
     const last_checked_span = wrapper_div.querySelector("span.release_radar_last_checked_span");
     main_btn.onclick = () => {
-        wrapper_div.classList.toggle("hide");
-        if (!wrapper_div.classList.contains("hide")) {
-            last_checked_span.textContent = `Last Update: ${time_ago(cache[user_id].last_checked)} ago`;
+        const is_closed = wrapper_div.classList.toggle("hide");
+        if (!is_closed) {
+            last_checked_span.textContent = `Last Update - ${time_ago(cache[user_id].last_checked)} ago`;
         }
     }
     return [parent_div, main_btn];
@@ -646,8 +673,8 @@ async function main() {
 
     let new_releases;
 
-    // use cache if cache for this user exists and if the cache is not older than N hours
-    if (cache[user_id] && Date.now() - cache[user_id].last_checked < config.update_cooldown_hours*60*60*1000) { // only update every N hours
+    // use cache if cache for this user exists and if
+    if (cache[user_id] && is_after_utc_midnight(cache[user_id].last_checked) ) {
         log("Checked earlier, using cache");
         new_releases = cache[user_id].new_releases;
     } else {
@@ -693,9 +720,9 @@ async function main() {
                 main_div.append(...new_releases_divs);
                 main_btn.classList.remove("loading");
             }
-        }, 10);
+        }, 50);
 
-        parent.querySelectorAll("div[class='popper-wrapper topbar-action']").forEach(e => e.addEventListener("click", (e) => {
+        parent.querySelectorAll("div.popper-wrapper.topbar-action").forEach(e => e.addEventListener("click", (e) => {
             console.log(e);
             if (!event.keepOpen) {
                 wrapper_div.classList.toggle("hide", true)
