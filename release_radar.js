@@ -106,7 +106,7 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
 
             while (next_page) {
                 if (cursor) {
-                    console.log("artist again", artist_id);
+                    log("Next request for the same artist (bad)");
                 }
                 [releases, next_page, cursor] = await get_releases(auth_token, artist_id, cursor);
 
@@ -133,13 +133,12 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
                         current_oldest_song_which_got_added_time = release.node.releaseDate;
                     }
 
-
                     const new_release = {
-                        artists: release.node.contributors.edges.map(e => e.node.name),
+                        artists: release.node.contributors.edges.map(e => [e.node.name]),
                         cover_img: release.node.cover.small[0],
                         name: release.node.displayTitle,
                         id: release.node.id,
-                        release_date: release.node.releaseDate,
+                        release_date: release.node.releaseDate - 7200000, // they get released at midnight UTC+2, but are shown to be released at midnight UTC so we would get negative time
                     };
 
                     new_releases.push(new_release);
@@ -169,6 +168,132 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
     return new_releases.slice(0, config.max_song_count);
 }
 
+async function get_all_songs_from_album(album_id, api_token) {
+        const r = await fetch("https://www.deezer.com/ajax/gw-light.php?method=song.getListByAlbum&input=3&api_version=1.0&api_token="+api_token, {
+            "body": JSON.stringify({
+                "alb_id": album_id,
+                "start": 0,
+                "nb": 500
+            }),
+            "method": "POST",
+            "credentials": "include"
+        });
+        const resp = await r.json();
+
+        return resp.results.data.map(s => s.SNG_ID);
+    }
+
+async function get_songs_in_playlist(playlist_id, api_token) {
+    const r = await fetch("https://www.deezer.com/ajax/gw-light.php?method=playlist.getSongs&input=3&api_version=1.0&api_token="+api_token, {
+        "body": JSON.stringify({
+            "playlist_id": playlist_id,
+            "start": 0,
+            "nb": 2000
+        }),
+        "method": "POST",
+        "credentials": "include"
+    });
+    const resp = await r.json()
+    if (resp.error.DATA_ERROR) {
+        console.error("Error getting songs for playlist"+playlist_id, resp.error.DATA_ERROR);
+    } else {
+        return resp.results.data;
+    }
+}
+
+async function add_songs_to_playlist(playlist_id, songs, api_token) {
+    const r = await fetch("https://www.deezer.com/ajax/gw-light.php?method=playlist.addSongs&input=3&api_version=1.0&api_token="+api_token, {
+        "body": JSON.stringify({
+            "playlist_id": playlist_id,
+            "songs": songs.map((s) => [s, 0]),
+            "offset": -1,
+            "ctxt": {
+                "id": null,
+                "t": null,
+            }
+        }),
+        "method": "POST",
+        "credentials": "include"
+    });
+    const resp = await r.json();
+    return resp;
+}
+
+async function update_order_of_playlist(playlist_id, songs_in_order_newest_first, api_token) {
+    const r = await fetch("https://www.deezer.com/ajax/gw-light.php?method=playlist.updateOrder&input=3&api_version=1.0&api_token="+api_token, {
+        "body": JSON.stringify({
+            "playlist_id": playlist_id,
+            "position": "0",
+            "order": songs_in_order_newest_first
+        }),
+        "method": "POST",
+        "credentials": "include"
+    });
+    const resp = await r.json();
+    return resp;
+}
+
+async function add_new_releases_to_playlist(playlist_id, new_releases, api_token) {
+    new_releases = new_releases.filter(r => !cache.has_seen[r.id]);
+    if (new_releases.length === 0) {
+        log("No new songs");
+        return;
+    }
+
+    const songs = {};
+    async function process_batch(batch) {
+        const promises = batch.map(async (new_release) => {
+            const songs_from_album = await get_all_songs_from_album(new_release.id, api_token);
+            for (let song_from_album of songs_from_album) {
+                songs[song_from_album] = new_release.release_date;
+            }
+        });
+        await Promise.all(promises);
+    }
+    const batch_size = 10;
+    for (let i = 0; i < new_releases.length; i += batch_size) {
+        const batch = new_releases.slice(i, i + batch_size);
+        await process_batch(batch);
+    }
+
+    const songs_in_playlist = (await get_songs_in_playlist(playlist_id, api_token)).map(s => s.SNG_ID);
+    for (let song_in_playlist of songs_in_playlist) {
+        if (songs[song_in_playlist]) {
+            delete songs[song_in_playlist];
+        }
+    }
+    const sorted_songs = Object.keys(songs).sort((a, b) => {
+        return songs[b] - songs[a];
+    });
+    if (sorted_songs.length === 0) {
+        log("All new songs already in playlist");
+        return;
+    }
+
+    let resp = await add_songs_to_playlist(playlist_id, sorted_songs, api_token);
+    if (resp.error.length > 0) {
+        log("Failed to add songs to playlist", r.error);
+        return false;
+    }
+
+    sorted_songs.push(...songs_in_playlist);
+
+    resp = await update_order_of_playlist(playlist_id, sorted_songs, api_token)
+    return resp.results;
+}
+
+function ajax_load(path) {
+    const big_deezer_logo = document.querySelector("#dzr-app > div > div > div > a");
+    const react_fiber_key = Object.keys(big_deezer_logo).find(key => key.startsWith('__reactFiber$'));
+    const deezer_ajax_history = big_deezer_logo[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.history; // there is probably an even easier way to get to the history function
+    const language = big_deezer_logo[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.match.url;
+    const ajax_redirect = deezer_ajax_history.createHref({
+        "pathname": language+path,
+        "search": "", "hash": "", "key": "", "query": {}
+    })
+    deezer_ajax_history.push(ajax_redirect);
+}
+
 
 function get_cache() {
     return GM_getValue("cache", {});
@@ -182,7 +307,8 @@ function get_config() {
     return GM_getValue("config", {
         max_song_count: 25,
         max_song_age: 90,
-        open_in_app: false
+        open_in_app: false,
+        playlist_id: ""
     });
 }
 
@@ -246,7 +372,7 @@ function time_ago(unix_timestamp, capitalize=false) {
 }
 
 function is_after_utc_midnight(unix_timestamp) {
-    let now = new Date(unix_timestamp);
+    let now = new Date(Date.now());
     let utc_midnight = new Date( Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) ); // get todays 00:00 UTC
 
     return unix_timestamp > utc_midnight;
@@ -271,16 +397,27 @@ function set_css() {
 .release_radar_main_btn:hover {
     background-color: var(--tempo-colors-background-neutral-tertiary-hovered);
 }
-.release_radar_main_btn svg path {
+.release_radar_main_btn > svg > path {
     fill: currentcolor;
 }
 
-.release_radar_main_btn svg circle {
-    fill: grey;
+.release_radar_status_indicator_span {
+    position: absolute;
+    transform: translateX(50%) translateY(-50%);
+    border-radius: var(--tempo-radii-full);
 }
-.release_radar_main_btn.loading svg circle {
-    fill: var(--tempo-colors-background-brand-flame);
+.release_radar_main_btn.adding_releases > span.release_radar_status_indicator_span,
+.release_radar_main_btn.loading > span.release_radar_status_indicator_span {
+    min-width: 15px;
+    min-height: 15px;
+    background-color: var(--tempo-colors-background-brand-flame);
     animation: load_pulse 2s infinite ease-in-out;;
+}
+.release_radar_main_btn.loading > span.release_radar_status_indicator_span {
+    background-color: var(--tempo-colors-background-brand-flame);
+}
+.release_radar_main_btn.adding_releases > span.release_radar_status_indicator_span {
+    background-color: var(--color-intent-warning);
 }
 @keyframes load_pulse {
     0%, 100% {
@@ -290,8 +427,20 @@ function set_css() {
         filter: brightness(1.5);
     }
 }
-.release_radar_main_btn.has_new svg circle {
-    fill: red;
+.release_radar_main_btn.has_new > span.release_radar_status_indicator_span {
+    display: flex;
+    min-width: 24px;
+    min-height: 24px;
+    background-color: var(--tempo-colors-background-accent-primary-default);
+    color: white;
+    font-size: 10px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    padding-inline-start: 6px;
+    padding-inline-end: 6px;
+    font-weight: var(--tempo-fontWeights-bold);
+    align-items: center;
+    justify-content: center;
 }
 
 .release_radar_wrapper_div {
@@ -337,24 +486,24 @@ function set_css() {
     border-bottom: 1px solid var(--tempo-colors-divider-main);
 }
 
-.release_radar_main_div_header_div button {
+.release_radar_main_div_header_div > button {
     position: relative;
     left: 45%;
     margin-left: 10px;
 }
-.release_radar_main_div_header_div button:hover {
+.release_radar_main_div_header_div > button:hover {
     transform: scale(1.2);
 }
 
-.release_radar_main_div_header_div div {
+.release_radar_main_div_header_div > div {
     display: grid;
-    grid-template-columns: minmax(0, 0.3fr) minmax(0, 0.3fr) minmax(0, 0.2fr);
+    grid-template-columns: minmax(0, 0.3fr) minmax(0, 0.4fr) minmax(0, 0.15fr) minmax(0, 0.3fr);
     margin-top: 10px;
     font-size: 12px;
     font-weight: normal;
 }
 
-.release_radar_main_div_header_div div>label {
+.release_radar_main_div_header_div > div > label {
     display: flex;
     flex-direction: column;
     color: var(--tempo-colors-text-neutral-secondary-default);
@@ -362,19 +511,19 @@ function set_css() {
     cursor: text;
 }
 
-.release_radar_main_div_header_div div>label>input {
+.release_radar_main_div_header_div > div > label > input {
     background-color: var(--tempo-colors-background-neutral-tertiary-default);
     border: 1px var(--tempo-colors-border-neutral-primary-default) solid;
     border-radius: var(--tempo-radii-s);
     padding: 0px 5px;
 }
-.release_radar_main_div_header_div div input:hover {
+.release_radar_main_div_header_div > div > input:hover {
     background-color: var(--tempo-colors-background-neutral-tertiary-hovered);
 }
-.release_radar_main_div_header_div div input:focus {
+.release_radar_main_div_header_div > div > input:focus {
     border-color: var(--tempo-colors-border-neutral-primary-focused);
 }
-.release_radar_main_div_header_div div>label>input[type='checkbox'] {
+.release_radar_main_div_header_div > div > label > input[type='checkbox'] {
     height: 25px;
     width: 25px;
 }
@@ -394,16 +543,86 @@ function set_css() {
 .release_li:hover {
     background-color: var(--tempo-colors-bg-contrast);
 }
-.release_li img {
-    border-radius: var(--tempo-radii-xs);
-}
 .release_li>div {
     display: inline-flex;
 }
 
+.release_radar_img_container_div {
+    position: relative;
+}
+.release_radar_img_container_div > img {
+    border-radius: var(--tempo-radii-xs);
+    cursor: pointer;
+}
+
+.release_radar_play_button {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--tempo-sizes-size-m);
+    min-height: var(--tempo-sizes-size-m);
+    border-radius: 50%;
+    background: var(--tempo-colors-background-accent-onDark-hovered);
+    transition-duration: 0.15s;
+    transition-property: opacity;
+    opacity: 0;
+}
+.release_radar_play_button:hover {
+    opacity: 1;
+}
+.release_radar_play_button>svg * {
+    fill: black;
+}
+.release_radar_play_button.is_playing {
+    opacity: 1;
+}
+
+.release_radar_play_button > svg > ellipse {
+    transition: rx 0.3s ease, ry 0.3s ease;
+    transform-origin: center;
+}
+@keyframes play_animation_common_1 {
+    0%, 100% { transform: scaleY(0.8); }
+    20%, 60% { transform: scaleY(1.5); }
+    40%, 80% { transform: scaleY(1.1); }
+}
+@keyframes play_animation_common_2 {
+    0%, 100% { transform: scaleY(1); }
+    15%, 90% { transform: scaleY(1.2); }
+    30%, 70% { transform: scaleY(1.1); }
+    55% { transform: scaleY(0.8); }
+}
+@keyframes play_animation_common_3 {
+    0%, 100% { transform: scaleY(1); }
+    15%, 70% { transform: scaleY(0.65); }
+    30%, 50% { transform: scaleY(1); }
+    40% { transform: scaleY(0.9); }
+}
+.release_radar_play_button > svg > ellipse:nth-child(1),
+.release_radar_play_button > svg > ellipse:nth-child(4) {
+    animation: play_animation_common_1 1s ease infinite alternate;
+}
+.release_radar_play_button > svg > ellipse:nth-child(2),
+.release_radar_play_button > svg > ellipse:nth-child(5) {
+    animation: play_animation_common_2 1s ease infinite alternate;
+}
+.release_radar_play_button > svg > ellipse:nth-child(3) {
+    animation: play_animation_common_3 1.3s ease infinite alternate;
+}
+.release_radar_play_button > svg > ellipse:nth-child(4),
+.release_radar_play_button > svg > ellipse:nth-child(5) {
+    animation-direction: reverse;
+}
+
+
 .release_radar_song_info_div {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     height: 42px;
     padding-top: 7px;
     max-width: 80%;
@@ -415,20 +634,20 @@ function set_css() {
     white-space: nowrap;
     text-overflow: ellipsis;
 }
-.release_radar_song_info_div a {
+.release_radar_song_info_div > a {
     font-size: 16px;
 }
-.release_radar_song_info_div.is_new a::before {
+.release_radar_song_info_div.is_new > a::before {
     content: "";
     display: inline-block;
-    width: 9px;
-    height: 9px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    background-color: red;
+    background-color: var(--tempo-colors-background-accent-primary-default);
     margin-right: 5px;
 }
 
-.release_radar_song_info_div div {
+.release_radar_song_info_div > div {
     color: var(--tempo-colors-text-neutral-secondary-default);
     font-size: 14px;
 }
@@ -450,19 +669,108 @@ function set_css() {
     GM_addStyle(css);
 }
 
-function create_new_releases_divs(new_releases, main_btn) {
+function create_new_releases_lis(new_releases, main_btn, wrapper_div) {
     function create_release_li(release) {
         const release_li = document.createElement("li");
         release_li.className = "release_li";
 
         const top_info_div = document.createElement("div");
 
-        const image_div = document.createElement("div");
+        const image_container_div = document.createElement("div");
+        image_container_div.className = "release_radar_img_container_div";
 
         const release_img = document.createElement("img");
         release_img.src = release.cover_img;
+        release_img.onclick = () => {
+            window.open(release.cover_img.replace("56x56", "1920x1920")) // max resolution
+        }
 
-        image_div.append(release_img);
+        const play_button = document.createElement("button");
+        play_button.className = "release_radar_play_button";
+
+        const play_icon = `<path d="M16.04 9.009a93.31 93.31 0 0 0-5.18-2.992 85.246 85.246 0 0 0-3.861-1.945.756.756 0 0 0-1.075.62 85.122 85.122 0 0 0-.246 4.317 92.993 92.993 0 0 0 0 5.982c.048 1.492.131 2.935.246 4.316.043.524.6.845 1.074.62a85.293 85.293 0 0 0 3.861-1.944 93.24 93.24 0 0 0 5.181-2.992 85.086 85.086 0 0 0 3.652-2.396.725.725 0 0 0 0-1.19A84.99 84.99 0 0 0 16.04 9.01Z"></path>`;
+        // simple pause itme, no animations
+        // const pause_icon = `<path fill-rule="evenodd" clip-rule="evenodd" d="M5.001 11.58c.02-2.585.249-4.847.55-6.753A.97.97 0 0 1 6.503 4H11v16H6.521a.968.968 0 0 1-.95-.823A45.403 45.403 0 0 1 5 11.579ZM17.48 4c.468 0 .873.344.95.823a45.4 45.4 0 0 1 .57 7.598 45.347 45.347 0 0 1-.55 6.752.97.97 0 0 1-.951.827H13V4h4.479Z"></path>`;
+        const pause_icon = `<ellipse cx="2" cy="12" rx="2" ry="3.5"></ellipse><ellipse cx="5.5" cy="12" rx="3" ry="7.5"></ellipse><ellipse cx="12" cy="12" rx="5" ry="12"></ellipse><ellipse cx="18.5" cy="12" rx="3" ry="7.5"></ellipse><ellipse cx="22" cy="12" rx="2" ry="3.5"></ellipse>`;
+
+        play_button.innerHTML = `<svg viewBox="0 0 24 24" width="24px" heigth="24px">${play_icon}</svg>`;
+        const play_button_svg = play_button.querySelector("svg");
+
+        const play_release = async () => {
+            log("Playing Release");
+            // tell the old hook to remove itself
+            dzPlayer._play("removehooks");
+            await dzPlayer.play({
+                "type": "album",
+                "id": release.id,
+                "radio": false,
+                "context": {
+                    "ID": release.id,
+                    "TYPE": "menu_panel_release_radar_album"
+                },
+                "data": []
+            });
+        }
+
+        let first_click = true;
+        play_button.onclick = async () => {
+            if (first_click) {
+                first_click = false;
+
+                await play_release();
+                log("Hooking control functions");
+
+                dzPlayer._play = (e, t) => {
+                    const remove_hooks = e === "removehooks";
+
+                    let context;
+                    if (!remove_hooks) context = dzPlayer.getContext();
+
+                    // if unrelated song is playing
+                    if (remove_hooks || context.TYPE !== "menu_panel_release_radar_album" || context.ID !== release.id) {
+                        log("Removing all player hooks");
+                        first_click = true;
+                        play_button_svg.innerHTML = play_icon;
+                        play_button.classList.toggle("is_playing", false);
+                        dzPlayer._play = orig_functions._play;
+                        dzPlayer.control.pause = orig_functions._pause;
+                        dzPlayer.control.play = orig_functions._continue;
+                        log("Removed all player hooks");
+                        if (remove_hooks) return;
+                    } else {
+                        play_button_svg.innerHTML = pause_icon;
+                        play_button.classList.toggle("is_playing", true);
+                    }
+                    orig_functions._play(e, t);
+                }
+                dzPlayer.control.pause = () => { // we dont need any checks here since this hook is only active while the correct release is playing
+                    play_button_svg.innerHTML = play_icon;
+                    play_button.classList.toggle("is_playing", false);
+                    orig_functions._pause();
+                }
+                dzPlayer.control.play = () => {
+                    play_button_svg.innerHTML = pause_icon;
+                    play_button.classList.toggle("is_playing", true);
+                    orig_functions._continue();
+                }
+
+            } else {
+                const context = dzPlayer.getContext();
+                // if unrelated song is playing
+                if (context.TYPE !== "menu_panel_release_radar_album" || context.ID !== release.id) {
+                    await play_release();
+                } else {
+                    // we use the hooked functions on purpose
+                    if (dzPlayer.isPaused()) {
+                        dzPlayer.control.play();
+                    } else {
+                        await dzPlayer.control.pause();
+                    }
+                }
+            }
+        }
+
+        image_container_div.append(release_img, play_button);
 
         const song_info_div = document.createElement("div");
         song_info_div.className = "release_radar_song_info_div";
@@ -470,6 +778,14 @@ function create_new_releases_divs(new_releases, main_btn) {
         const song_title_a = document.createElement("a");
         song_title_a.href = (config.open_in_app ? "deezer" : "https") + "://www.deezer.com/en/album/"+release.id;
         song_title_a.textContent = release.name;
+
+        song_title_a.onclick = (e) => {
+            if (song_title_a.href.startsWith("deezer")) {
+                return;
+            }
+            ajax_load("/album/"+release.id);
+            e.preventDefault();
+        }
 
         const artists_div = document.createElement("div");
         artists_div.textContent = release.artists.join(", ");
@@ -484,28 +800,46 @@ function create_new_releases_divs(new_releases, main_btn) {
             amount_new_songs++;
             main_btn.classList.toggle("has_new", true)
 
+            amount_songs_span.textContent = amount_new_songs;
+
             song_info_div.classList.toggle("is_new", true);
 
             release_li.onmouseover = () => {
                 release_li.onmouseover = null;
-                amount_new_songs--;
-
-                main_btn.classList.toggle("has_new", amount_new_songs > 0)
                 song_info_div.classList.toggle("is_new", false);
+
+                amount_new_songs--;
+                amount_songs_span.textContent = amount_new_songs;
+
+                if (amount_new_songs <= 0) {
+                    main_btn.classList.toggle("has_new", false);
+                    amount_songs_span.remove(); // we wont need it anymore as we reload the page to udpate songs
+                }
 
                 cache.has_seen[release.id] = true;
                 set_cache(cache);
             }
         }
 
-        top_info_div.append(image_div, song_info_div);
+        top_info_div.append(image_container_div, song_info_div);
 
         release_li.append(top_info_div, bottom_info_div);
         return release_li;
     }
 
     let amount_new_songs = 0;
-    return new_releases.map(r => create_release_li(r));
+    const amount_songs_span = main_btn.querySelector(".release_radar_status_indicator_span");
+
+    const orig_functions = {
+        _play: dzPlayer._play,
+        _pause: dzPlayer.control.pause,
+        _continue: dzPlayer.control.play,
+    }
+    const new_releases_lis = new_releases.map(r => create_release_li(r));
+    if (amount_new_songs <= 0) {
+        amount_songs_span.remove();
+    }
+    return new_releases_lis;
 }
 
 function create_main_div() {
@@ -562,6 +896,7 @@ function create_main_div() {
 
         const max_song_label = create_setting("Max. Songs", "The maximum amount of songs displayed at once. Only applies after a new scan.", "max_song_count");
         const max_song_age_label = create_setting("Max. Song Age", "The maximum age of a displayed song (in days). This affects how many requests are made, so keep it low to avoid performance/error issues. Only applies after a new scan.", "max_song_age");
+        const playlist_id_label = create_setting("Playlist ID", "The ID of the playlist in which to store new songs in (the numbers in the url). Empty in order to not save.", "playlist_id")
 
         const open_in_app_label = document.createElement("label");
         open_in_app_label.textContent = "App";
@@ -577,7 +912,7 @@ function create_main_div() {
         }
         open_in_app_label.appendChild(open_in_app_input)
 
-        settings_wrapper.append(max_song_label, max_song_age_label, open_in_app_label);
+        settings_wrapper.append(max_song_label, max_song_age_label, open_in_app_label, playlist_id_label);
         header_wrapper_div.append(settings_wrapper);
     }
 
@@ -619,8 +954,11 @@ function create_main_btn(wrapper_div) {
         <path
             d="M10.53 10.436c-.37.333-.53.856-.53 1.564 0 .714.168 1.234.537 1.564.325.292.805.436 1.463.436.719 0 1.219-.164 1.54-.496.32-.332.46-.832.46-1.504 0-.736-.211-1.269-.62-1.598-.332-.268-.795-.402-1.38-.402-.67 0-1.15.146-1.47.436ZM13 23v-7h-2v7h2Z">
         </path>
-        <circle cx="20" cy="4" r="4"></circle>
     </svg>`
+
+    const status_indicator_span = document.createElement("span");
+    status_indicator_span.className = "release_radar_status_indicator_span";
+    main_btn.appendChild(status_indicator_span);
 
     parent_div.appendChild(main_btn);
 
@@ -673,7 +1011,7 @@ async function main() {
 
     let new_releases;
 
-    // use cache if cache for this user exists and if
+    // use cache if cache for this user exists and if we havent checked that day
     if (cache[user_id] && is_after_utc_midnight(cache[user_id].last_checked) ) {
         log("Checked earlier, using cache");
         new_releases = cache[user_id].new_releases;
@@ -710,24 +1048,24 @@ async function main() {
 
         parent_div.append(wrapper_div);
 
-        const wait_for_releases_data = setInterval(() => {
+        const wait_for_releases_data = setInterval(async () => {
             log("Waiting for data");
             if (new_releases) {
                 clearInterval(wait_for_releases_data);
                 log("Got data");
 
-                const new_releases_divs = create_new_releases_divs(new_releases, main_btn);
+                const new_releases_divs = create_new_releases_lis(new_releases, main_btn, wrapper_div);
                 main_div.append(...new_releases_divs);
                 main_btn.classList.remove("loading");
+                if (config.playlist_id !== "") {
+                    main_btn.classList.add("adding_releases");
+                    await add_new_releases_to_playlist(config.playlist_id, new_releases, api_token);
+                    main_btn.classList.remove("adding_releases");
+                }
             }
         }, 50);
 
-        parent.querySelectorAll("div.popper-wrapper.topbar-action").forEach(e => e.addEventListener("click", (e) => {
-            console.log(e);
-            if (!event.keepOpen) {
-                wrapper_div.classList.toggle("hide", true)
-            }
-        }))
+        parent.querySelectorAll("div.popper-wrapper.topbar-action").forEach(e => e.addEventListener("click", (e) => {wrapper_div.classList.toggle("hide", true)} ))
         parent.insertBefore(parent_div, parent.querySelector("div:nth-child(2)"));
         log("UI initialized");
     }
