@@ -134,7 +134,7 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
                     }
 
                     const new_release = {
-                        artists: release.node.contributors.edges.map(e => [e.node.name]),
+                        artists: release.node.contributors.edges.map(e => e.node.name),
                         cover_img: release.node.cover.small[0],
                         name: release.node.displayTitle,
                         id: release.node.id,
