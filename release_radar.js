@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.1.0
+// @version      1.1.1
 // @author       Bababoiiiii
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -286,11 +286,12 @@ function ajax_load(path) {
     const big_deezer_logo = document.querySelector("#dzr-app > div > div > div > a");
     const react_fiber_key = Object.keys(big_deezer_logo).find(key => key.startsWith('__reactFiber$'));
     const deezer_ajax_history = big_deezer_logo[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.history; // there is probably an even easier way to get to the history function
-    const language = big_deezer_logo[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.match.url;
+    const language = big_deezer_logo[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.match.params.routeLanguage;
     const ajax_redirect = deezer_ajax_history.createHref({
-        "pathname": language+path,
+        "pathname": "/" + language + path,
         "search": "", "hash": "", "key": "", "query": {}
     })
+    console.log(ajax_redirect);
     deezer_ajax_history.push(ajax_redirect);
 }
 
@@ -776,7 +777,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div) {
         song_info_div.className = "release_radar_song_info_div";
 
         const song_title_a = document.createElement("a");
-        song_title_a.href = (config.open_in_app ? "deezer" : "https") + "://www.deezer.com/en/album/"+release.id;
+        song_title_a.href = (config.open_in_app ? "deezer" : "https") + "://www.deezer.com/album/"+release.id;
         song_title_a.textContent = release.name;
 
         song_title_a.onclick = (e) => {
