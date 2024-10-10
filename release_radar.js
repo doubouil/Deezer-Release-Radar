@@ -286,9 +286,8 @@ function ajax_load(path) {
     const big_deezer_logo = document.querySelector("#dzr-app > div > div > div > a");
     const react_fiber_key = Object.keys(big_deezer_logo).find(key => key.startsWith('__reactFiber$'));
     const deezer_ajax_history = big_deezer_logo[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.history; // there is probably an even easier way to get to the history function
-    const language = big_deezer_logo[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.match.params.routeLanguage;
     const ajax_redirect = deezer_ajax_history.createHref({
-        "pathname": "/" + language + path,
+        "pathname": path,
         "search": "", "hash": "", "key": "", "query": {}
     })
     console.log(ajax_redirect);
@@ -670,7 +669,7 @@ function set_css() {
     GM_addStyle(css);
 }
 
-function create_new_releases_lis(new_releases, main_btn, wrapper_div) {
+function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) {
     function create_release_li(release) {
         const release_li = document.createElement("li");
         release_li.className = "release_li";
@@ -784,7 +783,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div) {
             if (song_title_a.href.startsWith("deezer")) {
                 return;
             }
-            ajax_load("/album/"+release.id);
+            ajax_load(`/${language}/album/${release.id}`);
             e.preventDefault();
         }
 
@@ -1055,7 +1054,7 @@ async function main() {
                 clearInterval(wait_for_releases_data);
                 log("Got data");
 
-                const new_releases_divs = create_new_releases_lis(new_releases, main_btn, wrapper_div);
+                const new_releases_divs = create_new_releases_lis(new_releases, main_btn, wrapper_div, user_data.results.SETTING_LANG);
                 main_div.append(...new_releases_divs);
                 main_btn.classList.remove("loading");
                 if (config.playlist_id !== "") {
