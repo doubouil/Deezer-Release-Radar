@@ -5,6 +5,7 @@ A userscript to view new releases of artist you follow, not the ones Deezer thin
 ## Functionality
 - Adds a menu item right besides the notifications icon
 - Allows you to limit the amount of releases by amount or age (highly recommended as the higher the age limit, the more requests we need to make)
+- Lets you choose if you want to include Features (releases in which the artist contributed in at least 1 song, but isn't the main artist)
 - Allows you to add new songs to a specified playlist (by ID)
 - Allows you to open the releases in the desktop app
 - Scans for new artists every day, songs on deezer get released at midnight UTC
