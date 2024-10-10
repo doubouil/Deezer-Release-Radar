@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.1.1
+// @version      1.1.2
 // @author       Bababoiiiii
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -13,7 +13,6 @@
 
 // TODO:
 // artist blacklist by artist id
-// setting for if to include featured songs
 
 "use strict";
 
@@ -69,6 +68,9 @@ async function get_amount_of_songs_of_album(api_token, album_id) {
 }
 
 async function get_releases(auth_token, artist_id, cursor=null) {
+    const roles = ["MAIN"];
+    if (config.include_features) roles.push("FEATURED");
+
     const r = await fetch("https://pipe.deezer.com/api", {
         "headers": {
             "authorization": "Bearer "+auth_token,
@@ -80,12 +82,62 @@ async function get_releases(auth_token, artist_id, cursor=null) {
                 "artistId": artist_id,
                 "nb": Math.floor(config.max_song_age/7), // 1 release every week to try to get as little songs as possible, but also try to avoid multiple requests
                 "cursor": cursor,
+                "mode": "ALL",
                 "subType": null,
-                "roles": ["MAIN"],
+                "roles": roles,
                 "order": "RELEASE_DATE",
                 "types": ["EP", "SINGLES", "ALBUM"]
-            },
-            "query": "query ArtistDiscographyByType($artistId: String!, $nb: Int!, $roles: [ContributorRoles!]!, $types: [AlbumTypeInput!]!, $subType: AlbumSubTypeInput, $cursor: String, $order: AlbumOrder) {\n  artist(artistId: $artistId) {\n    albums(\n      after: $cursor\n      first: $nb\n      onlyCanonical: true\n      roles: $roles\n      types: $types\n      subType: $subType\n      order: $order\n    ) {\n      edges {\n        node {\n          ...AlbumBase\n        }\n      }\n      pageInfo {\n        hasNextPage\n        endCursor\n      }\n    }\n  }\n}\n\nfragment AlbumBase on Album {\n  id\n  displayTitle\n  releaseDate\n  cover {\n    ...PictureSmall\n  }\n  ...AlbumContributors\n}\n\nfragment PictureSmall on Picture {\n  small: urls(pictureRequest: {height: 56, width: 56})\n}\n\nfragment AlbumContributors on Album {\n  contributors {\n    edges {\n      node {\n        ... on Artist {\n          name\n        }\n      }\n    }\n  }\n}"
+            }, // for the query below: we only include the information needed for the featured songs functionality IF it is toggled on as we dont want to spam the api even more than we currently do
+            "query": `
+                query ArtistDiscographyByType($artistId: String!, $nb: Int!, $roles: [ContributorRoles!]!, $types: [AlbumTypeInput!]!, $subType: AlbumSubTypeInput, $cursor: String, $order: AlbumOrder) {
+                  artist(artistId: $artistId) {
+                    albums(
+                      after: $cursor
+                      first: $nb
+                      onlyCanonical: true
+                      roles: $roles
+                      types: $types
+                      subType: $subType
+                      order: $order
+                    ) {
+                      edges {
+                        node {
+                          ...AlbumBase
+                        }
+                      }
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
+                    }
+                  }
+                }
+
+                fragment AlbumBase on Album {
+                  id
+                  displayTitle
+                  releaseDate
+                  cover {
+                    ...PictureSmall
+                  }
+                  ...AlbumContributors
+                }
+
+                fragment PictureSmall on Picture {
+                  small: urls(pictureRequest: {height: 56, width: 56})
+                }
+
+                fragment AlbumContributors on Album {
+                  contributors {
+                    edges {
+                      ${config.include_features ? "roles\n      ": ""}node {
+                        ... on Artist {
+                          name${config.include_features ? "\n          id": ""}
+                        }
+                      }
+                    }
+                  }
+                }`
         }),
         "method": "POST",
     });
@@ -139,8 +191,8 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
                         name: release.node.displayTitle,
                         id: release.node.id,
                         release_date: release.node.releaseDate - 7200000, // they get released at midnight UTC+2, but are shown to be released at midnight UTC so we would get negative time
+                        is_feature: config.include_features && release.node.contributors.edges.some(e => e.node.id === artist_id && e.roles.includes("FEATURED"))
                     };
-
                     new_releases.push(new_release);
 
                     const amount_of_songs_in_album_promise = (async () => {
@@ -308,6 +360,7 @@ function get_config() {
         max_song_count: 25,
         max_song_age: 90,
         open_in_app: false,
+        include_features: false,
         playlist_id: ""
     });
 }
@@ -497,7 +550,7 @@ function set_css() {
 
 .release_radar_main_div_header_div > div {
     display: grid;
-    grid-template-columns: minmax(0, 0.3fr) minmax(0, 0.4fr) minmax(0, 0.15fr) minmax(0, 0.3fr);
+    grid-template-columns: minmax(0, 0.3fr) minmax(0, 0.25fr) minmax(0, 0.15fr) minmax(0, 0.15fr) minmax(0, 0.3fr);
     margin-top: 10px;
     font-size: 12px;
     font-weight: normal;
@@ -622,8 +675,7 @@ function set_css() {
 .release_radar_song_info_div {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    height: 42px;
+    height: 47px;
     padding-top: 7px;
     max-width: 80%;
 }
@@ -633,6 +685,7 @@ function set_css() {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    max-width: fit-content;
 }
 .release_radar_song_info_div > a {
     font-size: 16px;
@@ -645,6 +698,15 @@ function set_css() {
     border-radius: 50%;
     background-color: var(--tempo-colors-background-accent-primary-default);
     margin-right: 5px;
+}
+.release_radar_song_info_div.is_feature > a::after {
+    content: "feat.";
+    margin-left: 5px;
+    padding: 3px;
+    font-size: 12px;
+    color: black;
+    background-color: var(--color-light-grey-500);
+    border-radius: 20%;
 }
 
 .release_radar_song_info_div > div {
@@ -776,7 +838,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
         song_info_div.className = "release_radar_song_info_div";
 
         const song_title_a = document.createElement("a");
-        song_title_a.href = (config.open_in_app ? "deezer" : "https") + "://www.deezer.com/album/"+release.id;
+        song_title_a.href = `${(config.open_in_app ? "deezer" : "https")}://www.deezer.com/${language}/album/${release.id}`;
         song_title_a.textContent = release.name;
 
         song_title_a.onclick = (e) => {
@@ -785,6 +847,11 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
             }
             ajax_load(`/${language}/album/${release.id}`);
             e.preventDefault();
+        }
+
+        if (release.is_feature) {
+            song_info_div.classList.toggle("is_feature", true);
+            song_title_a.title = "The artist is featured in at least one of the songs of this release."
         }
 
         const artists_div = document.createElement("div");
@@ -888,31 +955,37 @@ function create_main_div() {
             }
 
             setting_label.appendChild(setting_input);
-
             return setting_label;
+        }
+
+        function create_setting_toggle(name, description, config_key, additional_callback=null) {
+            const setting_toggle_label = document.createElement("label");
+            setting_toggle_label.textContent = name;
+            setting_toggle_label.title = description;
+
+            const setting_toggle_input = document.createElement("input");
+            setting_toggle_input.type = "checkbox";
+            setting_toggle_input.checked = config[config_key];
+            setting_toggle_input.onchange = () => {
+                config[config_key] = setting_toggle_input.checked;
+                set_config(config);
+                if (additional_callback) additional_callback();
+            };
+            setting_toggle_label.appendChild(setting_toggle_input);
+            return setting_toggle_label;
         }
 
         settings_wrapper = document.createElement("div");
 
         const max_song_label = create_setting("Max. Songs", "The maximum amount of songs displayed at once. Only applies after a new scan.", "max_song_count");
-        const max_song_age_label = create_setting("Max. Song Age", "The maximum age of a displayed song (in days). This affects how many requests are made, so keep it low to avoid performance/error issues. Only applies after a new scan.", "max_song_age");
-        const playlist_id_label = create_setting("Playlist ID", "The ID of the playlist in which to store new songs in (the numbers in the url). Empty in order to not save.", "playlist_id")
-
-        const open_in_app_label = document.createElement("label");
-        open_in_app_label.textContent = "App";
-        open_in_app_label.title = "Open the links in the deezer desktop app.";
-
-        const open_in_app_input = document.createElement("input");
-        open_in_app_input.type = "checkbox";
-        open_in_app_input.checked = config.open_in_app;
-        open_in_app_input.onchange = () => {
-            config.open_in_app = open_in_app_input.checked;
-            set_config(config);
+        const max_song_age_label = create_setting("Max. Age", "The maximum age of a displayed song (in days). This affects how many requests are made, so keep it low to avoid performance/error issues. Only applies after a new scan.", "max_song_age");
+        const playlist_id_label = create_setting("Playlist", "The ID of the playlist in which to store new songs in (the numbers in the url). Empty in order to not save.", "playlist_id")
+        const open_in_app_label = create_setting_toggle("App", "Open the links in the deezer desktop app.", "open_in_app", () => {
             main_div.querySelectorAll("a").forEach(a => a.href = a.href.replace(config.open_in_app ? "https" : "deezer", config.open_in_app ? "deezer" : "https"));
-        }
-        open_in_app_label.appendChild(open_in_app_input)
+        })
+        const include_features_label = create_setting_toggle("Feat.", "Include Features", "include_features")
 
-        settings_wrapper.append(max_song_label, max_song_age_label, open_in_app_label, playlist_id_label);
+        settings_wrapper.append(max_song_label, max_song_age_label, open_in_app_label, include_features_label, playlist_id_label);
         header_wrapper_div.append(settings_wrapper);
     }
 
