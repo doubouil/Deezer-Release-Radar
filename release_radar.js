@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.1.2
+// @version      1.1.3
 // @author       Bababoiiiii
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -27,6 +27,7 @@ async function get_user_data() {
     const r = await fetch("https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=", {
         "body": "{}",
         "method": "POST",
+        "credentials": "include"
     });
     if (!r.ok) {
         return null;
@@ -55,13 +56,14 @@ function get_all_followed_artists(user_id) {
                 resolve(JSON.parse(artists));
             }
         }, 10);
-   });
+});
 }
 
 async function get_amount_of_songs_of_album(api_token, album_id) {
     const r = await fetch("https://www.deezer.com/ajax/gw-light.php?method=song.getListByAlbum&input=3&api_version=1.0&api_token="+api_token, {
         "body": `{\"alb_id\":\"${album_id}\",\"start\":0,\"nb\":0}`,
         "method": "POST",
+        "credentials": "include"
     });
     const resp = await r.json();
     return resp.results?.total;
@@ -80,7 +82,7 @@ async function get_releases(auth_token, artist_id, cursor=null) {
             "operationName": "ArtistDiscographyByType",
             "variables": {
                 "artistId": artist_id,
-                "nb": Math.floor(config.max_song_age/7), // 1 release every week to try to get as little songs as possible, but also try to avoid multiple requests
+                "nb": Math.floor(config.max_song_age/5), // 1 release every 5 days to try to get as little songs as possible, but also try to avoid multiple requests
                 "cursor": cursor,
                 "mode": "ALL",
                 "subType": null,
@@ -90,53 +92,53 @@ async function get_releases(auth_token, artist_id, cursor=null) {
             }, // for the query below: we only include the information needed for the featured songs functionality IF it is toggled on as we dont want to spam the api even more than we currently do
             "query": `
                 query ArtistDiscographyByType($artistId: String!, $nb: Int!, $roles: [ContributorRoles!]!, $types: [AlbumTypeInput!]!, $subType: AlbumSubTypeInput, $cursor: String, $order: AlbumOrder) {
-                  artist(artistId: $artistId) {
+                artist(artistId: $artistId) {
                     albums(
-                      after: $cursor
-                      first: $nb
-                      onlyCanonical: true
-                      roles: $roles
-                      types: $types
-                      subType: $subType
-                      order: $order
+                    after: $cursor
+                    first: $nb
+                    onlyCanonical: true
+                    roles: $roles
+                    types: $types
+                    subType: $subType
+                    order: $order
                     ) {
-                      edges {
+                    edges {
                         node {
-                          ...AlbumBase
+                        ...AlbumBase
                         }
-                      }
-                      pageInfo {
+                    }
+                    pageInfo {
                         hasNextPage
                         endCursor
-                      }
                     }
-                  }
+                    }
+                }
                 }
 
                 fragment AlbumBase on Album {
-                  id
-                  displayTitle
-                  releaseDate
-                  cover {
+                id
+                displayTitle
+                releaseDate
+                cover {
                     ...PictureSmall
-                  }
-                  ...AlbumContributors
+                }
+                ...AlbumContributors
                 }
 
                 fragment PictureSmall on Picture {
-                  small: urls(pictureRequest: {height: 56, width: 56})
+                small: urls(pictureRequest: {height: 56, width: 56})
                 }
 
                 fragment AlbumContributors on Album {
-                  contributors {
+                contributors {
                     edges {
-                      ${config.include_features ? "roles\n      ": ""}node {
+                    ${config.include_features ? "roles\n      ": ""}node {
                         ... on Artist {
-                          name${config.include_features ? "\n          id": ""}
+                        name${config.include_features ? "\n          id": ""}
                         }
-                      }
                     }
-                  }
+                    }
+                }
                 }`
         }),
         "method": "POST",
@@ -158,7 +160,7 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
 
             while (next_page) {
                 if (cursor) {
-                    log("Next request for the same artist (bad)");
+                    log("Next request for the same artist (bad)", artist_id);
                 }
                 [releases, next_page, cursor] = await get_releases(auth_token, artist_id, cursor);
 
@@ -335,38 +337,37 @@ async function add_new_releases_to_playlist(playlist_id, new_releases, api_token
 }
 
 function ajax_load(path) {
-    const big_deezer_logo = document.querySelector("#dzr-app > div > div > div > a");
-    const react_fiber_key = Object.keys(big_deezer_logo).find(key => key.startsWith('__reactFiber$'));
-    const deezer_ajax_history = big_deezer_logo[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.history; // there is probably an even easier way to get to the history function
-    const ajax_redirect = deezer_ajax_history.createHref({
-        "pathname": path,
-        "search": "", "hash": "", "key": "", "query": {}
-    })
-    console.log(ajax_redirect);
-    deezer_ajax_history.push(ajax_redirect);
+    const home_button = document.querySelector("#dzr-app > div > div > div > div > a")
+    const react_fiber_key = Object.keys(home_button).find(key => key.startsWith('__reactFiber$'));
+    const deezer_ajax_history = home_button[react_fiber_key].return.return.dependencies.firstContext.memoizedValue.history; // there is probably an even easier way to get to the history function
+    deezer_ajax_history.push(path);
 }
 
 
 function get_cache() {
-    return GM_getValue("cache", {});
+    const cache = localStorage.getItem("release_radar_cache");
+    return cache ? JSON.parse(cache) : {
+        has_seen: {}
+    };
 }
 
 function set_cache(data) {
-    GM_setValue("cache", data)
+    localStorage.setItem("release_radar_cache", JSON.stringify(data));
 }
 
 function get_config() {
-    return GM_getValue("config", {
+    const config = localStorage.getItem("release_radar_config");
+    return config ? JSON.parse(config) : {
         max_song_count: 25,
         max_song_age: 90,
         open_in_app: false,
         include_features: false,
         playlist_id: ""
-    });
+    };
 }
 
 function set_config(data) {
-    GM_setValue("config", data);
+    localStorage.setItem("release_radar_config", JSON.stringify(data));;
 }
 
 function pluralize(string, amount) {
@@ -374,7 +375,7 @@ function pluralize(string, amount) {
 }
 
 function pluralize(unit, value) {
-  return value === 1 ? unit : `${unit}s`;
+return value === 1 ? unit : `${unit}s`;
 }
 
 function time_ago(unix_timestamp, capitalize=false) {
@@ -436,7 +437,9 @@ function is_after_utc_midnight(unix_timestamp) {
 // UI stuff
 
 function set_css() {
-    const css = `
+    const css = document.createElement("style");
+    css.type = "text/css";
+    css.textContent = `
 .release_radar_main_btn {
     display: inline-flex;
     min-height: var(--tempo-sizes-size-m);
@@ -728,7 +731,7 @@ function set_css() {
 
 `;
 
-    GM_addStyle(css);
+    document.querySelector("head").appendChild(css);
 }
 
 function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) {
@@ -929,7 +932,7 @@ function create_main_div() {
     header_span.title = "Lists new releases from the artists you follow. The songs displayed are limited by either the maximum song age or the maximum song count limit (whichever kicks in first)."
 
     const settings_button = document.createElement("button");
-    settings_button.textContent = "⚙";
+    settings_button.textContent = "\u2699";
     settings_button.title = "Settings";
 
     let show = false;
@@ -990,7 +993,7 @@ function create_main_div() {
     }
 
     const reload_button = document.createElement("button");
-    reload_button.textContent = "⟳";
+    reload_button.textContent = "\u27F3";
     reload_button.title = "Scan for new songs. This reloads the page. Use after changing a setting.";
     reload_button.onclick = () => {
         cache[user_id].new_releases = [];
@@ -1055,6 +1058,7 @@ let cache;
 main();
 
 async function main() {
+    let new_releases;
     let parent_div = document.body.querySelector("#page_topbar");
     if (parent_div) {
         create_ui(parent_div);
@@ -1075,14 +1079,12 @@ async function main() {
 
     log("Getting user data");
     const user_data = await get_user_data();
-
     user_id = user_data.results.USER.USER_ID;
+
     const api_token = user_data.results.checkForm;
 
     cache = get_cache();
     if (!cache.has_seen) cache.has_seen = {}
-
-    let new_releases;
 
     // use cache if cache for this user exists and if we havent checked that day
     if (cache[user_id] && is_after_utc_midnight(cache[user_id].last_checked) ) {
