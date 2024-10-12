@@ -1,6 +1,10 @@
 # Deezer-Release-Radar
-A userscript to view new releases of artist you follow, not the ones Deezer thinks you like. Deezers Release Playlist does not feature small artists and features artists you heard 2 times. This radar features only all artists you follow. Designed for the Desktop Browser version, supports both dark and white mode. Tested on Chrome/Firefox with Violentmonkey/Tampermonkey.\
+A script to view new releases of artist you follow, not the ones Deezer thinks you like. Deezers Release Playlist does not feature small artists and features artists you heard 2 times. This radar features only all artists you follow. Designed for the Desktop Browser version, supports both dark and white mode. Tested on Chrome/Firefox with Violentmonkey/Tampermonkey and Desktop Application on Windows.\
+
 ![image](https://github.com/user-attachments/assets/8c2ea203-a649-42ca-950d-f6447af104af)
+
+## Now also supported for the desktop application
+Thanks to [this](https://github.com/bababoi-2/deezer-desktop-app-injection/) project we can now easily use scripts within the desktop application. You can download the version for that script [here]([https://github.com/bababoi-2/Deezer-Release-Radar/tree/desktop](https://github.com/bababoi-2/Deezer-Release-Radar/blob/desktop/release_radar.js))
 
 ## Functionality
 - Adds a menu item right besides the notifications icon
