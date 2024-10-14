@@ -6,9 +6,6 @@
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
 // @match        https://www.deezer.com/*
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_addStyle
 // ==/UserScript==
 
 // TODO:
