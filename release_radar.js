@@ -97,6 +97,7 @@ async function get_releases(auth_token, artist_id, cursor=null) {
                     roles: $roles
                     types: $types
                     subType: $subType
+                    mode: $mode
                     order: $order
                     ) {
                     edges {
