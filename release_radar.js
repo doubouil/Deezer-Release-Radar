@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.1.3
+// @version      1.1.4
 // @author       Bababoiiiii
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -10,6 +10,9 @@
 
 // TODO:
 // artist blacklist by artist id
+// add to x playlist if from y artist
+// see reddit stuff
+
 
 "use strict";
 
@@ -377,7 +380,7 @@ return value === 1 ? unit : `${unit}s`;
 }
 
 function time_ago(unix_timestamp, capitalize=false) {
-    const difference = Date.now() - unix_timestamp;
+    let difference = Date.now() - unix_timestamp;
 
     const milliseconds_in_a_second = 1000;
     const milliseconds_in_a_minute = 60 * milliseconds_in_a_second;
@@ -389,38 +392,48 @@ function time_ago(unix_timestamp, capitalize=false) {
 
     let time_ago;
 
+    let prefix, suffix;
+    if (difference < 0) {
+        difference = -difference;
+        prefix = "in ";
+        suffix = "";
+    } else {
+        prefix = "";
+        suffix = " ago";
+    }
+
     if (difference < milliseconds_in_a_minute) {
         time_ago = Math.floor(difference / milliseconds_in_a_second);
-        return `${time_ago} ${pluralize(capitalize ? "Second": "second", time_ago)}`;
+        return `${prefix}${time_ago} ${pluralize(capitalize ? "Second": "second", time_ago)}${suffix}`;
     }
 
     if (difference < milliseconds_in_an_hour) {
         time_ago = Math.floor(difference / milliseconds_in_a_minute);
-        return `${time_ago} ${pluralize(capitalize ? "Minute" : "minute", time_ago)}`;
+        return `${prefix}${time_ago} ${pluralize(capitalize ? "Minute" : "minute", time_ago)}${suffix}`;
     }
 
     if (difference < milliseconds_in_a_day) {
         time_ago = Math.floor(difference / milliseconds_in_an_hour);
-        return `${time_ago} ${pluralize(capitalize ? "Hour" : "hour", time_ago)}`;
+        return `${prefix}${time_ago} ${pluralize(capitalize ? "Hour" : "hour", time_ago)}${suffix}`;
     }
 
     if (difference < milliseconds_in_a_week) {
         time_ago = Math.floor(difference / milliseconds_in_a_day);
-        return `${time_ago} ${pluralize(capitalize ? "Day" : "day", time_ago)}`;
+        return `${prefix}${time_ago} ${pluralize(capitalize ? "Day" : "day", time_ago)}${suffix}`;
     }
 
     if (difference < milliseconds_in_a_month) {
         time_ago = Math.floor(difference / milliseconds_in_a_week);
-        return `${time_ago} ${pluralize(capitalize ? "Week" : "week", time_ago)}`;
+        return `${prefix}${time_ago} ${pluralize(capitalize ? "Week" : "week", time_ago)}${suffix}`;
     }
 
     if (difference < milliseconds_in_a_year) {
         time_ago = Math.floor(difference / milliseconds_in_a_month);
-        return `${time_ago} ${pluralize(capitalize ? "Month": "month", time_ago)}`;
+        return `${prefix}${time_ago} ${pluralize(capitalize ? "Month": "month", time_ago)}${suffix}`;
     }
 
     time_ago = Math.floor(difference / milliseconds_in_a_year);
-    return `${time_ago} ${pluralize(capitalize ? "Year" : "year", time_ago)}`;
+    return `${prefix}${time_ago} ${pluralize(capitalize ? "Year" : "year", time_ago)}${suffix}`;
 }
 
 function is_after_utc_midnight(unix_timestamp) {
@@ -542,7 +555,7 @@ function set_css() {
 
 .release_radar_main_div_header_div > button {
     position: relative;
-    left: 45%;
+    left: 37%;
     margin-left: 10px;
 }
 .release_radar_main_div_header_div > button:hover {
@@ -862,7 +875,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
 
         const bottom_info_div = document.createElement("div");
         bottom_info_div.className = "release_radar_bottom_info_div"
-        bottom_info_div.textContent = `${(new Date(release.release_date)).toLocaleDateString()} (${time_ago(release.release_date)} ago) - ${release.amount_songs} ${pluralize("Song", release.amount_songs)}` ;
+        bottom_info_div.textContent = `${(new Date(release.release_date)).toLocaleDateString()} (${time_ago(release.release_date)}) - ${release.amount_songs} ${pluralize("Song", release.amount_songs)}` ;
 
         if (!cache.has_seen[release.id]) {
             amount_new_songs++;
@@ -910,7 +923,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
     return new_releases_lis;
 }
 
-function create_main_div() {
+function create_main_div(new_releases) {
     const wrapper_div = document.createElement("div");
     wrapper_div.className = "release_radar_wrapper_div hide";
 
@@ -928,6 +941,20 @@ function create_main_div() {
     const header_span = document.createElement("span");
     header_span.textContent = "New Releases";
     header_span.title = "Lists new releases from the artists you follow. The songs displayed are limited by either the maximum song age or the maximum song count limit (whichever kicks in first)."
+
+    const mark_all_as_seen_button = document.createElement("button");
+    mark_all_as_seen_button.textContent = "\u2713";
+    mark_all_as_seen_button.title = "Mark all releases as seen.";
+    mark_all_as_seen_button.onclick = () => {
+        for (let new_release of new_releases) {
+            cache.has_seen[new_release.id] = true;
+            set_cache(cache);
+        }
+        main_div.querySelectorAll("div.release_radar_song_info_div.is_new").forEach(e => e.classList.remove("is_new"));
+        const main_btn = document.querySelector("button.release_radar_main_btn");
+        main_btn.classList.remove("has_new");
+        main_btn.querySelector("span").remove();
+    }
 
     const settings_button = document.createElement("button");
     settings_button.textContent = "\u2699";
@@ -1000,11 +1027,10 @@ function create_main_div() {
         location.reload();
     }
 
-    header_wrapper_div.append(header_span, reload_button, settings_button);
+    header_wrapper_div.append(header_span, mark_all_as_seen_button, reload_button, settings_button);
 
     const last_checked_span = document.createElement("span");
     last_checked_span.className = "release_radar_last_checked_span";
-
 
     popper_div.append(header_wrapper_div, main_div, last_checked_span);
     wrapper_div.append(popper_div, arrow_div);
@@ -1040,7 +1066,7 @@ function create_main_btn(wrapper_div) {
     main_btn.onclick = () => {
         const is_closed = wrapper_div.classList.toggle("hide");
         if (!is_closed) {
-            last_checked_span.textContent = `Last Update - ${time_ago(cache[user_id].last_checked)} ago`;
+            last_checked_span.textContent = `Last Update - ${time_ago(cache[user_id].last_checked)}`;
         }
     }
     return [parent_div, main_btn];
@@ -1116,7 +1142,7 @@ async function main() {
         log("Parent found");
         set_css();
 
-        const [wrapper_div, main_div] = create_main_div();
+        const [wrapper_div, main_div] = create_main_div(new_releases);
         const [parent_div, main_btn] = create_main_btn(wrapper_div);
 
         parent_div.append(wrapper_div);
