@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2-dev
+// @version      1.2.0
 // @author       Bababoiiiii
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -9,17 +9,17 @@
 // ==/UserScript==
 
 // TODO:
-// artist blacklist by artist id
 // add to x playlist if from y artist
-// see reddit stuff
-// settings for if to completely hide upcoming releases, show them with the divider or just show them normally
-
 
 "use strict";
 
 function log(...args) {
     console.log("[Deezer Release Radar]", ...args);
 }
+function error(...args) {
+    console.error("[Deezer Release Radar]", ...args);
+}
+
 
 // data stuff
 
@@ -125,7 +125,7 @@ async function get_releases(auth_token, artist_id, cursor=null) {
                 fragment AlbumBase on Album {
                 id
                 displayTitle
-                type${false ? "im gonna use this as a comment: this was a guess" : ""}
+                type
                 releaseDate
                 cover {
                     ...PictureSmall
@@ -175,13 +175,29 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
                 for (let release of releases) {
                     release.node.releaseDate = new Date(release.node.releaseDate).getTime();
 
-                    // stop requesting songs if the song is older than the age limit
+                    const new_release = {
+                        from_artist: artist_id,
+                        artists: release.node.contributors.edges.map(e => [e.node.name, e.node.id]),
+                        cover_img: release.node.cover.small[0],
+                        name: release.node.displayTitle,
+                        id: release.node.id,
+                        release_date: release.node.releaseDate - 7200000, // they get released at midnight UTC+2, but are shown to be released at midnight UTC so we would get negative time
+                        is_feature: config.types.features && release.node.contributors.edges.some(e => ( e.node.id === artist_id && e.roles.includes("FEATURED") ) || e.node.id === "5080") , // 5080 = Various artists
+                        type: release.node.type
+                    };
+
+                    // stop requesting songs if the song is older than the age limit...
                     if (current_time - release.node.releaseDate > 1000 * 60 * 60 * 24 * config.max_song_age) {
                         next_page = null;
                         break;
                     }
 
-                    // OR if we already hit the amount limit and the song is older than the oldest song (would get removed anyways)
+                    // configurable filters
+                    if (is_release_filtered(new_release)) {
+                        continue;
+                    }
+
+                    // ...OR if we already hit the amount limit and the song is older than the oldest song (would get removed anyways)
                     // this doesnt entirely remove the list splicing since younger songs can still be added
                     // this optimisation is really small and often doesnt affect anything, due to the fact that we can get most artists recent releases in 1 request
                     // the next step to this optimisation would be to get the oldest song in the list which is within the amount limit and remove older songs
@@ -195,15 +211,7 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
                         current_oldest_song_which_got_added_time = release.node.releaseDate;
                     }
 
-                    const new_release = {
-                        artists: release.node.contributors.edges.map(e => e.node.name),
-                        cover_img: release.node.cover.small[0],
-                        name: release.node.displayTitle,
-                        id: release.node.id,
-                        release_date: release.node.releaseDate - 7200000, // they get released at midnight UTC+2, but are shown to be released at midnight UTC so we would get negative time
-                        is_feature: config.types.features && release.node.contributors.edges.some(e => e.node.id === artist_id && e.roles.includes("FEATURED")),
-                        type: release.node.type
-                    };
+
                     new_releases.push(new_release);
 
                     const amount_of_songs_in_album_promise = (async () => {
@@ -242,8 +250,7 @@ async function get_all_songs_from_album(album_id, api_token) {
             "credentials": "include"
         });
         const resp = await r.json();
-
-        return resp.results.data.map(s => s.SNG_ID);
+        return resp.results.data;
     }
 
 async function get_songs_in_playlist(playlist_id, api_token) {
@@ -258,7 +265,7 @@ async function get_songs_in_playlist(playlist_id, api_token) {
     });
     const resp = await r.json()
     if (resp.error.DATA_ERROR) {
-        console.error("Error getting songs for playlist"+playlist_id, resp.error.DATA_ERROR);
+        error("Error getting songs for playlist"+playlist_id, resp.error.DATA_ERROR);
     } else {
         return resp.results.data;
     }
@@ -302,17 +309,23 @@ async function add_new_releases_to_playlist(playlist_id, new_releases, api_token
         log("No new songs");
         return;
     }
-    const songs_in_playlist = (await get_songs_in_playlist(playlist_id, api_token)).map(s => s.SNG_ID);
+    let songs_in_playlist = await get_songs_in_playlist(playlist_id, api_token)
     if (!songs_in_playlist) {
         log("Aborting the adding of new releases to playlist");
+        return;
     }
+    songs_in_playlist = songs_in_playlist.map(s => s.SNG_ID);
 
     const songs = {};
     async function process_batch(batch) {
         const promises = batch.map(async (new_release) => {
             const songs_from_album = await get_all_songs_from_album(new_release.id, api_token);
             for (let song_from_album of songs_from_album) {
-                songs[song_from_album] = new_release.release_date;
+                if (song_from_album.ARTISTS.every( (artist) => artist.ART_ID !== new_release.from_artist) || // if it doesnt feature artist
+                    is_song_filtered(song_from_album)) {
+                    continue;
+                }
+                songs[song_from_album.SNG_ID] = new_release.release_date;
             }
         });
         await Promise.all(promises);
@@ -338,22 +351,29 @@ async function add_new_releases_to_playlist(playlist_id, new_releases, api_token
 
     let resp = await add_songs_to_playlist(playlist_id, sorted_songs, api_token);
     if (resp.error.length > 0 || resp.error.REQUEST_ERROR) {
-        log("Failed to add songs to playlist", playlist_id, resp.error);
-        return false;
+        error("Failed to add songs to playlist", playlist_id, resp.error);
+        return;
     }
 
     sorted_songs.push(...songs_in_playlist);
-
+    log("Updating Order of playlist")
     resp = await update_order_of_playlist(playlist_id, sorted_songs, api_token)
     return resp.results;
 }
 
-function is_release_filtered(release) {
-    return  !config.types.features && release.is_feature ||
-            !config.types.singles && release.type === "SINGLES" ||
-            !config.types.albums && release.type === "ALBUM" ||
-            !config.types.eps && release.type === "EP";
+function is_release_filtered(release, current_time=Date.now()) {
+    return  !config.types.features && release.is_feature || // filter features
+            !config.types.singles && release.type === "SINGLES" || // filter singles
+            !config.types.albums && release.type === "ALBUM" || // filter albums
+            !config.types.eps && release.type === "EP" || // filter EPs
+            (config.types.upcoming_releases === 2 && release.release_date > current_time) || // filter upcoming releases (if set to hide)
+            config.filters.contributor_id.some(id => release.artists.some(artist => artist[1] === id)) || // filter contributors by id
+            config.filters.release_name.some(regex_str => (new RegExp(regex_str, "i")).test(release.name)) // filter releases by their name using regex
 }
+function is_song_filtered(song) {
+    return config.filters.song_name.some(regex_str => (new RegExp(regex_str, "i")).test(`${song.SNG_TITLE} ${song.VERSION}`.trim()));
+}
+
 
 function ajax_load(path) {
     const home_button = document.querySelector("#dzr-app > div > div > div > div > a")
@@ -413,14 +433,15 @@ function migrate_config(config, CURRENT_CONFIG_VERSION) {
             [null, "config_version", CURRENT_CONFIG_VERSION],
             [null, "compact_mode", false],
             [null, "filters", {
-                "contributor_id": [],
-                "contributor_name": [],
-                "release_name": [],
+                "contributor_id": ["5080"],
+                "release_name": [String.raw`(\(|- )(((super )?slowed(( *&| *\+| *,) *reverb)?)|(sped up)|(reverb)|(8d audio)|(speed))( version)?\)? *$`],
+                "song_name": [String.raw`(\(|- )(((super )?slowed(( *&| *\+| *,) *reverb)?)|(sped up)|(reverb)|(8d audio)|(speed))( version)?\)? *$`],
             }],
             [null, "types", {
                 singles: true,
                 albums: true,
                 eps: true,
+                upcoming_releases: 0
             }],
             ["include_features", "types.features"],
         ]
@@ -461,18 +482,18 @@ function get_config() {
         max_song_age: 90,
         open_in_app: false,
         playlist_id: null,
-        compact_mode: true,
+        compact_mode: false,
         filters: {
-            "contributor_id": [],
-            "contributor_name": [], // regexes
-            "release_name": [],
-            "song_name": [], // dont add if any of the songs in the release hit a blacklist regex, may be difficult due to async nature
+            "contributor_id": ["5080"], // 5080 = Various Artists
+            "release_name": [String.raw`(\(|- )(((super )?slowed(( *&| *\+| *,) *reverb)?)|(sped up)|(reverb)|(8d audio)|(speed))( version)?\)? *$`],
+            "song_name": [String.raw`(\(|- )(((super )?slowed(( *&| *\+| *,) *reverb)?)|(sped up)|(reverb)|(8d audio)|(speed))( version)?\)? *$`], // dont add if any of the songs in the release hit a blacklist regex, may be difficult due to async nature
         },
         "types": {
-                singles: true,
-                albums: true,
-                eps: true,
-                features: false,
+            singles: true,
+            albums: true,
+            eps: true,
+            features: false,
+            upcoming_releases: 0 // 0 = show normally, 1 = use dropdown, 2 = hide completely
         }
     };
 }
@@ -693,8 +714,11 @@ function set_css() {
 .release_radar_settings_wrapper_div {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 6fr));
-    gap: 10px;
+    gap: 7px 10px;
     margin-top: 10px;
+    max-height: 200px;
+    overflow: auto;
+    scrollbar-width: none;
     font-size: 12px;
     font-weight: normal;
 }
@@ -703,24 +727,40 @@ function set_css() {
     display: flex;
     flex-direction: column;
     color: var(--tempo-colors-text-neutral-secondary-default);
-    cursor: text;
+    cursor: default;
 }
 
-.release_radar_main_div_header_div > div > label > input {
+.release_radar_main_div_header_div > div > label > input,
+.release_radar_main_div_header_div > div > label > textarea,
+.release_radar_main_div_header_div > div > label > select {
     background-color: var(--tempo-colors-background-neutral-tertiary-default);
     border: 1px var(--tempo-colors-border-neutral-primary-default) solid;
     border-radius: var(--tempo-radii-s);
     padding: 0px 5px;
 }
-.release_radar_main_div_header_div > div > input:hover {
+.release_radar_main_div_header_div > div > label > textarea {
+    max-height: 50px;
+    overflow: auto;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    line-height: 20px;
+}
+.release_radar_main_div_header_div > div > label > input:hover,
+.release_radar_main_div_header_div > div > label > textarea:hover,
+.release_radar_main_div_header_div > div > label > select:hover {
     background-color: var(--tempo-colors-background-neutral-tertiary-hovered);
 }
-.release_radar_main_div_header_div > div > input:focus {
+.release_radar_main_div_header_div > div > label > input:focus,
+.release_radar_main_div_header_div > div > label > textarea:focus,
+.release_radar_main_div_header_div > div > label > select:focus {
     border-color: var(--tempo-colors-border-neutral-primary-focused);
 }
+.release_radar_main_div_header_div > div > label:has(input[type="checkbox"]) {
+    align-items: center;
+}
 .release_radar_main_div_header_div > div > label > input[type='checkbox'] {
-    height: 25px;
-    width: 25px;
+    height: 20px;
+    width: 20px;
 }
 
 .release_radar_upcoming_releases_details {
@@ -1035,7 +1075,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
         }
 
         const artists_div = document.createElement("div");
-        artists_div.textContent = release.artists.join(", ");
+        artists_div.textContent = release.artists.map(a => a[0]).join(", ");
 
         song_info_div.append(song_title_a, artists_div);
 
@@ -1091,17 +1131,25 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
 
     const past_releases = new_releases.filter(r => r.release_date <= now);
     const past_releases_lis = past_releases.map(r => create_release_li(r));
-    const upcoming_releases = new_releases.filter(r => r.release_date > now);
-    let upcoming_releases_lis = [];
 
-    if (upcoming_releases.length > 0) {
-        const upcoming_releases_details = document.createElement("details");
-        upcoming_releases_details.className = "release_radar_upcoming_releases_details";
-        const upcoming_releases_details_summary = document.createElement("summary");
-        upcoming_releases_details_summary.textContent = "Upcoming Releases";
-        upcoming_releases_details.append(upcoming_releases_details_summary, ...upcoming_releases.map(r => create_release_li(r)));
-        upcoming_releases_lis = [upcoming_releases_details]; // hacky way to allow the return whether there are upcoming releases or not
+    let upcoming_releases_lis = [];
+    if (config.types.upcoming_releases !== 2) { // not hidden
+        const upcoming_releases = new_releases.filter(r => r.release_date > now);
+
+        if (upcoming_releases.length > 0) {
+            upcoming_releases_lis = upcoming_releases.map(r => create_release_li(r))
+
+            if (config.types.upcoming_releases === 1) { // seperated
+                const upcoming_releases_details = document.createElement("details");
+                upcoming_releases_details.className = "release_radar_upcoming_releases_details";
+                const upcoming_releases_details_summary = document.createElement("summary");
+                upcoming_releases_details_summary.textContent = "Upcoming Releases";
+                upcoming_releases_details.append(upcoming_releases_details_summary, ...upcoming_releases_lis);
+                upcoming_releases_lis = [upcoming_releases_details]; // hacky way to allow the return whether there are upcoming releases or not
+            }
+        }
     }
+
 
     if (amount_new_songs <= 0) {
         amount_songs_span.remove();
@@ -1120,46 +1168,70 @@ class Setting {
         this.setting_label.style.gridColumn = size;
         this.setting_label.textContent = name;
         this.setting_label.title = description;
-        this.setting_input = document.createElement("input");
-        this.setting_label.appendChild(this.setting_input);
     }
 
-    text_setting(additional_callback=null) {
-        this.setting_input.type = "text";
-        this.setting_input.value = this.config_key_parent[this.config_key];
-        this.setting_input.onchange = () => {
-            this.config_key_parent[this.config_key] = this.setting_input.value;
+    text_setting(modify_value_callback=null, additional_callback=null) {
+        const setting_input = document.createElement("textarea");
+        setting_input.value = this.config_key_parent[this.config_key];
+        setting_input.onchange = () => {
+            this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.value) : setting_input.value;
             set_config(config);
             if (additional_callback) additional_callback(this.config_key_parent[this.config_key]);
         }
+        this.setting_label.appendChild(setting_input);
         return this.setting_label;
     }
 
-    number_setting(additional_callback=null) {
-        this.setting_input.type = "number";
-        this.setting_input.value = this.config_key_parent[this.config_key];
-        this.setting_input.onchange = () => {
-            this.config_key_parent[this.config_key] = parseInt(this.setting_input.value);
+    number_setting(modify_value_callback=null, additional_callback=null) {
+        const setting_input = document.createElement("input");
+        setting_input.type = "number";
+        setting_input.value = this.config_key_parent[this.config_key];
+        setting_input.onchange = () => {
+            this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.value) : parseInt(setting_input.value);
             set_config(config);
             if (additional_callback) additional_callback(this.config_key_parent[this.config_key]);
         }
+        this.setting_label.appendChild(setting_input);
         return this.setting_label;
     }
 
-    checkbox_setting(additional_callback=null) {
-        this.setting_input.type = "checkbox";
-        this.setting_input.checked = this.config_key_parent[this.config_key];
-        this.setting_input.onchange = () => {
-            this.config_key_parent[this.config_key] = this.setting_input.checked;
+    checkbox_setting(modify_value_callback=null, additional_callback=null) {
+        const setting_input = document.createElement("input");
+        setting_input.type = "checkbox";
+        setting_input.checked = this.config_key_parent[this.config_key];
+        setting_input.onchange = () => {
+            this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.checked) : setting_input.checked;
             set_config(config);
             if (additional_callback) additional_callback(this.config_key_parent[this.config_key]);
         };
+        this.setting_label.appendChild(setting_input);
+        return this.setting_label;
+    }
+
+    dropdown_setting(option_names, modify_value_callback=null, additional_callback=null) {
+        // options: [nameforoption1, nameforoption2...]
+        const setting_input = document.createElement("select");
+        setting_input.className = "release_radar_dropdown";
+        for (let option_name of option_names) {
+            const option_elem = document.createElement("option");
+            option_elem.textContent = option_name;
+            setting_input.appendChild(option_elem);
+        }
+        setting_input.selectedIndex = this.config_key_parent[this.config_key];
+
+        setting_input.onchange = () => {
+            this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.selectedIndex) : setting_input.selectedIndex;
+            set_config(config);
+            if (additional_callback) additional_callback(this.config_key_parent[this.config_key]);
+        }
+
+        this.setting_label.appendChild(setting_input);
         return this.setting_label;
     }
 }
 
 
-function create_main_div(new_releases) {
+function create_main_div(wait_for_new_releases_promise) {
     const wrapper_div = document.createElement("div");
     wrapper_div.className = "release_radar_wrapper_div hide";
 
@@ -1184,7 +1256,8 @@ function create_main_div(new_releases) {
     const mark_all_as_seen_button = document.createElement("button");
     mark_all_as_seen_button.textContent = "\u2713";
     mark_all_as_seen_button.title = "Mark all releases as seen.";
-    mark_all_as_seen_button.onclick = () => {
+    mark_all_as_seen_button.onclick = async () => {
+        const new_releases = await wait_for_new_releases_promise;
         for (let new_release of new_releases) {
             cache.has_seen[new_release.id] = true;
             set_cache(cache);
@@ -1232,10 +1305,10 @@ function create_main_div(new_releases) {
         settings_wrapper.appendChild(
             (new Setting(
                 "Playlist",
-                "The ID of the playlist in which to store new songs in (the numbers in the url). Empty in order to not save.",
+                "The ID of the playlist in which to store new songs in (the numbers in the url). Empty in order to not save. Songs only get added after a page reload.",
                 config, "playlist_id",
                 "span 2"
-            )).number_setting()
+            )).number_setting((playlist_id) => playlist_id.trim() === "" ? null : parseInt(playlist_id).toString())
         );
 
         settings_wrapper.appendChild(
@@ -1244,7 +1317,7 @@ function create_main_div(new_releases) {
                 "Make everything more compact, allowing for more songs to be viewed at once.",
                 config, "compact_mode",
                 "span 1"
-            )).checkbox_setting((checked) => {
+            )).checkbox_setting(null, (checked) => {
                 main_div.classList.toggle("compact", checked);
             })
         );
@@ -1255,35 +1328,26 @@ function create_main_div(new_releases) {
                 "Open the links in the deezer desktop app.",
                 config, "open_in_app",
                 "span 1"
-            )).checkbox_setting((checked) => {
+            )).checkbox_setting(null, (checked) => {
                 main_div.querySelectorAll("a").forEach(a => a.href = a.href.replace(checked ? "https" : "deezer", checked ? "deezer" : "https"));
             })
         );
 
-        const filter_releases = (checked) => {
+        const filter_releases = async (args) => {
+            const new_releases = await wait_for_new_releases_promise;
             const all_releases = main_div.querySelectorAll("li.release_radar_release_li");
-            if (!checked) {
-                new_releases.forEach((release, i) => {
-                    if (is_release_filtered(release)) {
-                        all_releases[i].classList.add("filtered");
-                    }
-                });
-            } else {
-                new_releases.forEach((release, i) => {
-                    if (!is_release_filtered(release)) {
-                        all_releases[i].classList.remove("filtered");
-                    }
-                });
-            }
+            new_releases.forEach((release, i) => {
+                all_releases[i].classList.toggle("filtered", is_release_filtered(release));
+            });
         }
 
         settings_wrapper.appendChild(
             (new Setting(
                 "Feat.",
-                "Include Features",
+                "Include Features. This also includes albums by 'Various artists', to avoid this, blacklist that 'artist' with the ID (5080).",
                 config.types, "features",
                 "span 1"
-            )).checkbox_setting(filter_releases)
+            )).checkbox_setting(null, filter_releases)
         );
 
         settings_wrapper.appendChild(
@@ -1292,7 +1356,7 @@ function create_main_div(new_releases) {
                 "Include Singles",
                 config.types, "singles",
                 "span 1"
-            )).checkbox_setting(filter_releases)
+            )).checkbox_setting(null, filter_releases)
         );
 
         settings_wrapper.appendChild(
@@ -1301,7 +1365,7 @@ function create_main_div(new_releases) {
                 "Include EPs",
                 config.types, "eps",
                 "span 1"
-            )).checkbox_setting(filter_releases)
+            )).checkbox_setting(null, filter_releases)
         );
 
         settings_wrapper.appendChild(
@@ -1310,11 +1374,52 @@ function create_main_div(new_releases) {
                 "Include Albums",
                 config.types, "albums",
                 "span 1"
-            )).checkbox_setting(filter_releases)
+            )).checkbox_setting(null, filter_releases)
         );
 
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Upcoming",
+                "How to handle upcoming releases. Only applies after a page reload.",
+                config.types, "upcoming_releases",
+                "span 2"
+            )).dropdown_setting(["Normal", "Seperate", "Hide"])
+        );
 
-        header_wrapper_div.append(settings_wrapper);
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Release Name Blacklist Regexes",
+                "Blacklist releases by their names from being displayed/fetched using regex. Seperate by new line. Each regex is case insensitive. Test your regexes in the browser, as JS' regex is a bit wonky.",
+                config.filters, "release_name",
+                "span 6"
+            )).text_setting((release_name_regexes) => {
+                return release_name_regexes.split("\n").filter(r => r.trim() !== "");
+            }, filter_releases)
+        );
+
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Song Name Blacklist Regexes",
+                "Blacklist songs by their names from getting added to a playlist using regex. Seperate by new line. Each regex is case insensitive. Test your regexes in the browser, as JS' regex is a bit wonky.",
+                config.filters, "song_name",
+                "span 6"
+            )).text_setting((song_name_regexes) => {
+                return song_name_regexes.split("\n").filter(r => r.trim() !== "");
+            })
+        );
+
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Artist ID Blacklist",
+                "Blacklist contributors by their ID (the numbers in the url). Seperate with comma. 5080 is the ID for 'Various Artists'",
+                config.filters, "contributor_id",
+                "span 6"
+            )).text_setting((artist_ids_str) => {
+                return artist_ids_str.split(",").map(l => Number(l.trim()) ? l.trim() : null).filter(id => id !== null); // ignore faulty ones
+            }, filter_releases)
+        );
+
+        header_wrapper_div.appendChild(settings_wrapper);
     }
 
     const reload_button = document.createElement("button");
@@ -1383,6 +1488,8 @@ main();
 
 async function main() {
     let new_releases;
+    let resolve_wait_for_new_releases_promise;
+    let wait_for_new_releases_promise = new Promise(resolve => resolve_wait_for_new_releases_promise = resolve);
     let parent_div = document.body.querySelector("#page_topbar");
     if (parent_div) {
         create_ui(parent_div);
@@ -1414,6 +1521,7 @@ async function main() {
     if (cache[user_id] && is_after_utc_midnight(cache[user_id].last_checked) ) {
         log("Checked earlier, using cache");
         new_releases = cache[user_id].new_releases;
+        resolve_wait_for_new_releases_promise(new_releases);
     } else {
         log("Getting followed artists");
         const artist_ids = await get_all_followed_artists(user_id);
@@ -1423,6 +1531,7 @@ async function main() {
 
         log("Getting new releases")
         new_releases = await get_new_releases(auth_token, api_token, artist_ids);
+        resolve_wait_for_new_releases_promise(new_releases);
 
         cache[user_id] = {
             last_checked: Date.now(),
@@ -1434,7 +1543,7 @@ async function main() {
     console.log(new_releases);
 
 
-    function create_ui(parent) {
+    async function create_ui(parent) {
         if (ui_initialized) {
             return;
         }
@@ -1442,30 +1551,27 @@ async function main() {
         log("Parent found");
         set_css();
 
-        const [wrapper_div, main_div] = create_main_div(new_releases);
+        const [wrapper_div, main_div] = create_main_div(wait_for_new_releases_promise);
         const [parent_div, main_btn] = create_main_btn(wrapper_div);
 
         parent_div.append(wrapper_div);
-
-        const wait_for_releases_data = setInterval(async () => {
-            log("Waiting for data");
-            if (new_releases) {
-                clearInterval(wait_for_releases_data);
-                log("Got data");
-
-                const new_releases_divs = create_new_releases_lis(new_releases, main_btn, wrapper_div, user_data.results.SETTING_LANG);
-                main_div.append(...new_releases_divs);
-                main_btn.classList.remove("loading");
-                if (config.playlist_id) {
-                    main_btn.classList.add("adding_releases");
-                    await add_new_releases_to_playlist(config.playlist_id, new_releases, api_token);
-                    main_btn.classList.remove("adding_releases");
-                }
-            }
-        }, 50);
-
         parent.querySelectorAll("div.popper-wrapper.topbar-action").forEach(e => e.addEventListener("click", (e) => {wrapper_div.classList.add("hide")} ))
         parent.insertBefore(parent_div, parent.querySelector("div:nth-child(2)"));
+
+        log("Waiting for data");
+        await wait_for_new_releases_promise;
+        log("Got data");
+
+        const new_releases_divs = create_new_releases_lis(new_releases, main_btn, wrapper_div, user_data.results.SETTING_LANG);
+        main_div.append(...new_releases_divs);
+        main_btn.classList.remove("loading");
+        if (config.playlist_id) {
+            log("Adding songs to playlist", config.playlist_id);
+            main_btn.classList.add("adding_releases");
+            await add_new_releases_to_playlist(config.playlist_id, new_releases, api_token);
+            main_btn.classList.remove("adding_releases");
+        }
+
         log("UI initialized");
     }
 }
