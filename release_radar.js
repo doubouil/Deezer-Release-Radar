@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2.0
+// @version      1.2.1
 // @author       Bababoiiiii
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -127,6 +127,7 @@ async function get_releases(auth_token, artist_id, cursor=null) {
                 displayTitle
                 type
                 releaseDate
+                isFavorite
                 cover {
                     ...PictureSmall
                 }
@@ -183,7 +184,8 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
                         id: release.node.id,
                         release_date: release.node.releaseDate - 7200000, // they get released at midnight UTC+2, but are shown to be released at midnight UTC so we would get negative time
                         is_feature: config.types.features && release.node.contributors.edges.some(e => ( e.node.id === artist_id && e.roles.includes("FEATURED") ) || e.node.id === "5080") , // 5080 = Various artists
-                        type: release.node.type
+                        type: release.node.type,
+                        is_favorite: release.node.isFavorite
                     };
 
                     // stop requesting songs if the song is older than the age limit...
@@ -478,8 +480,8 @@ function get_config() {
     log("No config found, creating new");
     return { // base default config
         config_version: 2,
-        max_song_count: 25,
-        max_song_age: 90,
+        max_song_count: 30,
+        max_song_age: 30,
         open_in_app: false,
         playlist_id: null,
         compact_mode: false,
@@ -890,7 +892,7 @@ function set_css() {
     padding-right: 35px;
     font-size: 16px;
 }
-.release_radar_song_info_div.is_new > a::before {
+.release_radar_release_li.is_new .release_radar_song_info_div > a::before {
     content: "";
     display: inline-block;
     width: 12px;
@@ -899,7 +901,7 @@ function set_css() {
     background-color: var(--tempo-colors-background-accent-primary-default);
     margin-right: 5px;
 }
-.release_radar_song_info_div.is_feature > a::after {
+.release_radar_release_li.is_feature .release_radar_song_info_div > a::after {
     content: "feat.";
     position: absolute;
     right: 0;
@@ -909,6 +911,10 @@ function set_css() {
     color: black;
     background-color: var(--color-light-grey-700);
     border-radius: 2px;
+}
+.release_radar_release_li.is_favorite .release_radar_img_container_div > img {
+    border: 1px solid var(--tempo-colors-text-accent-primary-default);
+    cursor: pointer;
 }
 
 .release_radar_song_info_div > div {
@@ -1076,8 +1082,12 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
         }
 
         if (release.is_feature) {
-            song_info_div.classList.add("is_feature");
+            release_li.classList.add("is_feature");
             song_title_a.title = "The artist is featured in at least one of the songs of this release."
+        }
+        if (release.is_favorite) {
+            release_li.classList.add("is_favorite");
+            image_container_div.title = "You favorited this release.";
         }
 
         const artists_div = document.createElement("div");
@@ -1093,11 +1103,11 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
             amount_new_songs++;
             amount_songs_span.textContent = amount_new_songs;
             main_btn.classList.add("has_new")
-            song_info_div.classList.add("is_new");
+            release_li.classList.add("is_new");
 
             release_li.onmouseover = () => {
                 release_li.onmouseover = null;
-                song_info_div.classList.remove("is_new");
+                release_li.classList.remove("is_new");
 
                 amount_new_songs--;
                 amount_songs_span.textContent = amount_new_songs;
@@ -1269,11 +1279,7 @@ function create_main_div(wait_for_new_releases_promise) {
             cache.has_seen[new_release.id] = true;
             set_cache(cache);
         }
-        main_div.querySelectorAll("li.release_radar_release_li").forEach(e => {
-            if (e.querySelector("div:nth-child(1) > div.release_radar_song_info_div.is_new")) {
-                e.onmouseover();
-            }
-        });
+        main_div.querySelectorAll("li.release_radar_release_li.is_new").forEach(e => {e.onmouseover()});
     }
 
     const settings_button = document.createElement("button");
