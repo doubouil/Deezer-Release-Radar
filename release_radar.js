@@ -512,11 +512,9 @@ function singularize(word) { // https://stackoverflow.com/questions/57429677/jav
         r => endings[r]
     );
 }
-
 function pluralize(string, amount) {
     return amount === 1 ? string : string+"s";
 }
-
 function correct_spelling(word) {
     return ({
         "ep": "EP",
@@ -536,8 +534,6 @@ function time_ago(unix_timestamp, capitalize=false) {
     const milliseconds_in_a_month = 30 * milliseconds_in_a_day; // approx
     const milliseconds_in_a_year = 365 * milliseconds_in_a_day;
 
-    let time_ago;
-
     let prefix, suffix;
     if (difference < 0) {
         difference = -difference;
@@ -548,38 +544,43 @@ function time_ago(unix_timestamp, capitalize=false) {
         suffix = " ago";
     }
 
+    let unit, time_ago;
     if (difference < milliseconds_in_a_minute) {
         time_ago = Math.floor(difference / milliseconds_in_a_second);
-        return `${prefix}${time_ago} ${pluralize(capitalize ? "Second": "second", time_ago)}${suffix}`;
+        unit = "second";
     }
 
-    if (difference < milliseconds_in_an_hour) {
+    else if (difference < milliseconds_in_an_hour) {
         time_ago = Math.floor(difference / milliseconds_in_a_minute);
-        return `${prefix}${time_ago} ${pluralize(capitalize ? "Minute" : "minute", time_ago)}${suffix}`;
+        unit = "minute";
     }
 
-    if (difference < milliseconds_in_a_day) {
+    else if (difference < milliseconds_in_a_day) {
         time_ago = Math.floor(difference / milliseconds_in_an_hour);
-        return `${prefix}${time_ago} ${pluralize(capitalize ? "Hour" : "hour", time_ago)}${suffix}`;
+        unit = "hour";
     }
 
-    if (difference < milliseconds_in_a_week) {
+    else if (difference < milliseconds_in_a_week) {
         time_ago = Math.floor(difference / milliseconds_in_a_day);
-        return `${prefix}${time_ago} ${pluralize(capitalize ? "Day" : "day", time_ago)}${suffix}`;
+        unit = "day";
     }
 
-    if (difference < milliseconds_in_a_month) {
+    else if (difference < milliseconds_in_a_month) {
         time_ago = Math.floor(difference / milliseconds_in_a_week);
-        return `${prefix}${time_ago} ${pluralize(capitalize ? "Week" : "week", time_ago)}${suffix}`;
+        unit = "week";
     }
 
-    if (difference < milliseconds_in_a_year) {
+    else if (difference < milliseconds_in_a_year) {
         time_ago = Math.floor(difference / milliseconds_in_a_month);
-        return `${prefix}${time_ago} ${pluralize(capitalize ? "Month": "month", time_ago)}${suffix}`;
+        unit = "month";
     }
 
-    time_ago = Math.floor(difference / milliseconds_in_a_year);
-    return `${prefix}${time_ago} ${pluralize(capitalize ? "Year" : "year", time_ago)}${suffix}`;
+    else {
+        time_ago = Math.floor(difference / milliseconds_in_a_year);
+        unit = "year";
+    }
+
+    return `${prefix}${time_ago} ${pluralize(capitalize ? unit.charAt(0).toUpperCase()+unit.slice(1) : unit, time_ago)}${suffix}`;
 }
 
 function is_after_utc_midnight(unix_timestamp) {
@@ -722,6 +723,9 @@ function set_css() {
     font-size: 12px;
     font-weight: normal;
 }
+.release_radar_settings_wrapper_div::-webkit-scrollbar {
+    display: none;
+}
 
 .release_radar_main_div_header_div > div > label {
     display: flex;
@@ -739,11 +743,15 @@ function set_css() {
     padding: 0px 5px;
 }
 .release_radar_main_div_header_div > div > label > textarea {
-    max-height: 50px;
+    height: 75px;
     overflow: auto;
     white-space: nowrap;
     scrollbar-width: thin;
     line-height: 20px;
+    resize: none;
+}
+.release_radar_main_div_header_div > div > label > textarea::-webkit-scrollbar {
+    height: 10px;
 }
 .release_radar_main_div_header_div > div > label > input:hover,
 .release_radar_main_div_header_div > div > label > textarea:hover,
@@ -755,9 +763,7 @@ function set_css() {
 .release_radar_main_div_header_div > div > label > select:focus {
     border-color: var(--tempo-colors-border-neutral-primary-focused);
 }
-.release_radar_main_div_header_div > div > label:has(input[type="checkbox"]) {
-    align-items: center;
-}
+
 .release_radar_main_div_header_div > div > label > input[type='checkbox'] {
     height: 20px;
     width: 20px;
@@ -1143,7 +1149,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
                 const upcoming_releases_details = document.createElement("details");
                 upcoming_releases_details.className = "release_radar_upcoming_releases_details";
                 const upcoming_releases_details_summary = document.createElement("summary");
-                upcoming_releases_details_summary.textContent = "Upcoming Releases";
+                upcoming_releases_details_summary.textContent = upcoming_releases.length+" Upcoming Releases";
                 upcoming_releases_details.append(upcoming_releases_details_summary, ...upcoming_releases_lis);
                 upcoming_releases_lis = [upcoming_releases_details]; // hacky way to allow the return whether there are upcoming releases or not
             }
@@ -1196,6 +1202,7 @@ class Setting {
     }
 
     checkbox_setting(modify_value_callback=null, additional_callback=null) {
+        this.setting_label.style.alignItems = "center";
         const setting_input = document.createElement("input");
         setting_input.type = "checkbox";
         setting_input.checked = this.config_key_parent[this.config_key];
@@ -1262,10 +1269,11 @@ function create_main_div(wait_for_new_releases_promise) {
             cache.has_seen[new_release.id] = true;
             set_cache(cache);
         }
-        main_div.querySelectorAll("div.release_radar_song_info_div.is_new").forEach(e => e.classList.remove("is_new"));
-        const main_btn = document.querySelector("button.release_radar_main_btn");
-        main_btn.classList.remove("has_new");
-        main_btn.querySelector("span")?.remove();
+        main_div.querySelectorAll("li.release_radar_release_li").forEach(e => {
+            if (e.querySelector("div:nth-child(1) > div.release_radar_song_info_div.is_new")) {
+                e.onmouseover();
+            }
+        });
     }
 
     const settings_button = document.createElement("button");
@@ -1424,7 +1432,7 @@ function create_main_div(wait_for_new_releases_promise) {
 
     const reload_button = document.createElement("button");
     reload_button.textContent = "\u27F3";
-    reload_button.title = "Scan for new songs. This reloads the page. Use after changing a setting.";
+    reload_button.title = "Scan for new songs. This reloads the page. Use after changing a setting or if something broke.";
     reload_button.onclick = () => {
         cache[user_id].new_releases = [];
         cache[user_id].last_checked = 0;
