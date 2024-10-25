@@ -9,12 +9,15 @@ Thanks to the [DeezMod](https://github.com/bababoi-2/DeezMod) project we can now
 ## Functionality
 - Adds a menu item right besides the notifications icon
 - Allows you to limit the amount of releases by amount or age (highly recommended as the higher the age limit, the more requests we need to make)
-- Lets you choose if you want to include Features (releases in which the artist contributed in at least 1 song, but isn't the main artist)
-- Allows you to add new songs to a specified playlist (by ID)
+- Lets you choose if you want to include Features, Singles, EPs, Albums
+- Allows you to add new songs to a specified playlist (by ID), features a blacklist using regex to filter out songs with a specific name
+- Allows you to seperate/hide Upcoming Releases
+- Allows you to blacklist releases using regex
+- Allows you to blacklist artists using their ID
 - Allows you to open the releases in the desktop app
+- 
 - Scans for new artists every day, songs on deezer get released at midnight UTC
 - Allows you to play songs directly from within the radar, view the cover images in 1920x1920 resolution, supports ajax loading of releases
-- Saving settings requires a hard reload of the page
 - Note: When launching for the first time, all songs are considered new
 
 ## Links
