@@ -479,7 +479,7 @@ function get_config() {
 
     log("No config found, creating new");
     return { // base default config
-        config_version: 2,
+        config_version: CURRENT_CONFIG_VERSION,
         max_song_count: 30,
         max_song_age: 30,
         open_in_app: false,
