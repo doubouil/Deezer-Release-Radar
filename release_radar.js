@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2.2
+// @version      1.2.3
 // @author       Bababoiiiii
 // @grant GM_getValue
 // @grant GM_setValue
@@ -171,6 +171,11 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
 
     async function process_artist_batch(batch_artist_ids) {
         const batch_promises = batch_artist_ids.map(async (artist_id) => {
+            if (config.filters.contributor_id.includes(artist_id)) {
+                log("Completely skipping artist", artist_id);
+                return;
+            }
+
             let [releases, next_page, cursor] = [null, true, null];
 
             while (next_page) {
