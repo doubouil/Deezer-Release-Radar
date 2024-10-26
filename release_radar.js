@@ -11,9 +11,6 @@
 // TODO:
 // add to x playlist if from y artist
 
-// changelog:
-// improved artist blacklist logic
-
 "use strict";
 
 function log(...args) {
