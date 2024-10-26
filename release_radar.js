@@ -930,9 +930,13 @@ function set_css() {
     background-color: var(--color-light-grey-700);
     border-radius: 2px;
 }
-.release_radar_release_li.is_favorite .release_radar_img_container_div > img {
-    border: 1px solid var(--tempo-colors-text-accent-primary-default);
+/* Set border as transparent to avoid difference in width */
+.release_radar_release_li .release_radar_img_container_div > img {
+    border: 2px solid transparent;
     cursor: pointer;
+}
+.release_radar_release_li.is_favorite .release_radar_img_container_div > img {
+    border-color: var(--tempo-colors-text-accent-primary-default);
 }
 
 .release_radar_song_info_div > div {
