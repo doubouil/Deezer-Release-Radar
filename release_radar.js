@@ -690,6 +690,7 @@ function set_css() {
 .release_radar_main_div {
     max-height: 450px;
     overflow-y: auto;
+    scrollbar-width: thin;
 }
 
 .release_radar_main_div_arrow {
@@ -704,7 +705,7 @@ function set_css() {
 }
 
 .release_radar_main_div_header_div {
-    padding: 12px 24px;
+    padding: 12px 0px 0px 24px;
     font-weight: var(--tempo-fontWeights-heading-m);
     font-size: var(--tempo-fontSizes-heading-m);
     line-height: var(--tempo-lineHeights-heading-m);
@@ -712,6 +713,8 @@ function set_css() {
 }
 .release_radar_main_div_header_div > span {
     cursor: default;
+    padding: 0 0 12px 0;
+    display: inline-block;
 }
 
 .release_radar_main_div_header_div > button {
@@ -730,9 +733,10 @@ function set_css() {
     margin-top: 10px;
     max-height: 200px;
     overflow: auto;
-    scrollbar-width: none;
+    scrollbar-width: thin;
     font-size: 12px;
     font-weight: normal;
+    padding: 0 12px 12px 0;
 }
 .release_radar_settings_wrapper_div::-webkit-scrollbar {
     display: none;
@@ -753,6 +757,10 @@ function set_css() {
     border-radius: var(--tempo-radii-s);
     padding: 0px 5px;
     flex-grow: 1;
+}
+.release_radar_main_div_header_div > div > label > input,
+.release_radar_main_div_header_div > div > label > textarea {
+    font-family: monospace;
 }
 .release_radar_main_div_header_div > div > label > textarea {
     height: 75px;
@@ -1199,7 +1207,7 @@ class Setting {
     text_setting(modify_value_callback=null, additional_callback=null) {
         const setting_input = document.createElement("textarea");
         setting_input.value = this.config_key_parent[this.config_key];
-        setting_input.onchange = () => {
+        setting_input.oninput = () => {
             this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.value) : setting_input.value;
             set_config(config);
             if (additional_callback) additional_callback(this.config_key_parent[this.config_key]);
@@ -1208,11 +1216,13 @@ class Setting {
         return this.setting_label;
     }
 
-    number_setting(modify_value_callback=null, additional_callback=null) {
+    number_setting(modify_value_callback=null, additional_callback=null, steps = 10, min = 1) {
         const setting_input = document.createElement("input");
         setting_input.type = "number";
+        setting_input.min = min;
+        setting_input.step = steps;
         setting_input.value = this.config_key_parent[this.config_key];
-        setting_input.onchange = () => {
+        setting_input.oninput = () => {
             this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.value) : parseInt(setting_input.value);
             set_config(config);
             if (additional_callback) additional_callback(this.config_key_parent[this.config_key]);
