@@ -1519,7 +1519,7 @@ function create_main_btn(wrapper_div) {
     const last_checked_span = wrapper_div.querySelector("span.release_radar_last_checked_span");
     main_btn.onclick = () => {
         const is_closed = wrapper_div.classList.toggle("hide");
-        if (!is_closed) {
+        if (!is_closed && cache[user_id].last_checked) {
             last_checked_span.textContent = `Last Update - ${time_ago(cache[user_id].last_checked)}`;
         }
     }
