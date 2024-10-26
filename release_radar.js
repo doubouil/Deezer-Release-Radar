@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2.2
+// @version      1.2.3
 // @author       Bababoiiiii
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -10,6 +10,9 @@
 
 // TODO:
 // add to x playlist if from y artist
+
+// changelog:
+// improved artist blacklist logic
 
 "use strict";
 
@@ -165,6 +168,11 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
 
     async function process_artist_batch(batch_artist_ids) {
         const batch_promises = batch_artist_ids.map(async (artist_id) => {
+            if (config.filters.contributor_id.includes(artist_id)) {
+                log("Completely skipping artist", artist_id);
+                return;
+            }
+
             let [releases, next_page, cursor] = [null, true, null];
 
             while (next_page) {
