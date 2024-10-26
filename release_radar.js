@@ -705,7 +705,7 @@ function set_css() {
 }
 
 .release_radar_main_div_header_div {
-    padding: 12px 0px 0px 24px;
+    padding: 12px 0px 0px 16px;
     font-weight: var(--tempo-fontWeights-heading-m);
     font-size: var(--tempo-fontSizes-heading-m);
     line-height: var(--tempo-lineHeights-heading-m);
