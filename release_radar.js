@@ -5,6 +5,10 @@
 // @author       Bababoiiiii
 // @grant GM_getValue
 // @grant GM_setValue
+// @grant GM_getValues
+// @grant GM_setValues
+// @grant GM_listValues
+// @grant GM_addValueChangeListener
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
 // @match        https://www.deezer.com/*
@@ -451,11 +455,7 @@ function migrate_config(config, CURRENT_CONFIG_VERSION) {
         ],
         [
             [null, "simultaneous_artists", 10]
-        ],
-        [
-          [false, "compact_mode", 0],
-          [true, "compact_mode", 2]
-        ],
+        ]
     ]
 
     const old_cfg_version = config.config_version === undefined ? -1 : config.config_version;
@@ -474,15 +474,19 @@ function migrate_config(config, CURRENT_CONFIG_VERSION) {
         });
         log("Migrated to version", patch);
     }
+    set_config(config);
     return config;
 }
 
 function get_config() {
-    const CURRENT_CONFIG_VERSION = 2;
+    const CURRENT_CONFIG_VERSION = 1;
 
     let config = localStorage.getItem("release_radar_config");
-    if( GM_getValue !== undefined ) {
-      config = GM_getValue('release_radar_config');
+    if( GM_getValues !== undefined ) {
+      var keys = GM_listValues();
+      if( keys.length ) {
+        config = GM_getValues(keys);
+      }
     }
     if (config) {
         if( config.length ) {
@@ -497,7 +501,7 @@ function get_config() {
     }
 
     log("No config found, creating new");
-    return { // base default config
+    const default_config = {
         config_version: CURRENT_CONFIG_VERSION,
         simultaneous_artists: 10,
         max_song_count: 30,
@@ -518,12 +522,15 @@ function get_config() {
             upcoming_releases: 0 // 0 = show normally, 1 = use dropdown, 2 = hide completely
         }
     };
+    // Start storage
+    set_config(default_config);
+    return default_config;
 }
 
 function set_config(data) {
     localStorage.setItem("release_radar_config", JSON.stringify(data));
-    if( GM_setValue !== undefined ) {
-      GM_setValue('release_radar_config', data);
+    if( GM_setValues !== undefined ) {
+      GM_setValues(data);
     }
 }
 function apply_compact_mode_class(main_div, config) {
@@ -1276,11 +1283,13 @@ class Setting {
         this.setting_label.style.gridColumn = size;
         this.setting_label.textContent = name;
         this.setting_label.title = description;
+        this.setting_label.htmlFor = config_key;
     }
 
     text_setting(modify_value_callback=null, additional_callback=null) {
         const setting_input = document.createElement("textarea");
         setting_input.value = this.config_key_parent[this.config_key];
+        setting_input.id = this.config_key;
         setting_input.oninput = () => {
             this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.value) : setting_input.value;
             set_config(config);
@@ -1296,6 +1305,7 @@ class Setting {
         setting_input.min = min;
         setting_input.step = steps;
         setting_input.value = this.config_key_parent[this.config_key];
+        setting_input.id = this.config_key;
         setting_input.oninput = () => {
             this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.value) : parseInt(setting_input.value);
             set_config(config);
@@ -1308,6 +1318,7 @@ class Setting {
     checkbox_setting(modify_value_callback=null, additional_callback=null) {
         const setting_input = document.createElement("input");
         setting_input.type = "checkbox";
+        setting_input.id = this.config_key;
         setting_input.checked = this.config_key_parent[this.config_key];
         setting_input.onchange = () => {
             this.config_key_parent[this.config_key] = modify_value_callback ? modify_value_callback(setting_input.checked) : setting_input.checked;
@@ -1321,6 +1332,7 @@ class Setting {
     dropdown_setting(option_names, modify_value_callback=null, additional_callback=null) {
         // options: [nameforoption1, nameforoption2...]
         const setting_input = document.createElement("select");
+        setting_input.id = this.config_key;
         setting_input.className = "release_radar_dropdown";
         for (let option_name of option_names) {
             const option_elem = document.createElement("option");
@@ -1684,6 +1696,20 @@ async function main() {
             await add_new_releases_to_playlist(config.playlist_id, new_releases, api_token);
             main_btn.classList.remove("adding_releases");
         }
+        // Allow for cross tabs changes without using a BroadcastChannel
+        GM_addValueChangeListener("compact_mode", function(name, oldValue, newValue, fromOtherTab) {
+          // log( 'GM_addValueChangeListener', name, oldValue, newValue, fromOtherTab );
+          if( name === "compact_mode" && oldValue !== newValue) {
+            log('Propagate change of compact_mode');
+            config.compact_mode = newValue;
+            if( main_div !== undefined ) {
+               apply_compact_mode_class(main_div, config);
+            }
+            if( document.getElementById('compact_mode').length ) {
+              document.getElementById('compact_mode').selectedIndex = newValue;
+            }
+          }
+        });
 
         log("UI initialized");
     }
