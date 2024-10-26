@@ -449,7 +449,11 @@ function migrate_config(config, CURRENT_CONFIG_VERSION) {
         ],
         [
             [null, "simultaneous_artists", 10]
-        ]
+        ],
+        [
+          [false, "compact_mode", 0],
+          [true, "compact_mode", 2]
+        ],
     ]
 
     const old_cfg_version = config.config_version === undefined ? -1 : config.config_version;
@@ -472,7 +476,7 @@ function migrate_config(config, CURRENT_CONFIG_VERSION) {
 }
 
 function get_config() {
-    const CURRENT_CONFIG_VERSION = 1;
+    const CURRENT_CONFIG_VERSION = 2;
 
     let config = localStorage.getItem("release_radar_config");
     if (config) {
@@ -493,7 +497,7 @@ function get_config() {
         max_song_age: 30,
         open_in_app: false,
         playlist_id: null,
-        compact_mode: false,
+        compact_mode: 0,
         filters: {
             "contributor_id": ["5080"], // 5080 = Various Artists
             "release_name": [String.raw`(\(|- )(((super )?slowed(( *&| *\+| *,) *reverb)?)|(sped up)|(reverb)|(8d audio)|(speed))( version)?\)? *$`],
@@ -511,6 +515,25 @@ function get_config() {
 
 function set_config(data) {
     localStorage.setItem("release_radar_config", JSON.stringify(data));;
+}
+function apply_compact_mode_class(main_div, config) {
+    main_div.classList.remove('compact');
+    main_div.classList.remove('no-image');
+    main_div.classList.remove('smallest');
+    switch( config.compact_mode ) {
+      case 1 :
+        main_div.classList.add('compact');
+        break;
+      case 2 :
+        main_div.classList.add('compact');
+        main_div.classList.add('no-image');
+        break;
+      case 3 :
+        main_div.classList.add('compact');
+        main_div.classList.add('no-image');
+        main_div.classList.add('smallest');
+        break;
+    }
 }
 
 function singularize(word) { // https://stackoverflow.com/questions/57429677/javascript-make-a-word-singular-singularize
@@ -785,8 +808,8 @@ function set_css() {
 }
 
 .release_radar_main_div_header_div > div > label > input[type='checkbox'] {
-    height: 20px;
-    width: 20px;
+    height: 25px;
+    width: 25px;
     accent-color: var(--tempo-colors-border-neutral-primary-focused);
 }
 
@@ -961,23 +984,55 @@ function set_css() {
 .release_radar_main_div.compact .release_radar_release_li {
     padding: 4px 16px;
 }
-.release_radar_main_div.compact .release_radar_release_li > div > div.release_radar_img_container_div {
-    display: none;
-}
 .release_radar_main_div.compact .release_radar_release_li > div > .release_radar_song_info_div {
     padding-top: 0px;
 }
 .release_radar_main_div.compact .release_radar_release_li > div > .release_radar_song_info_div > a {
-    padding-left: 0px;
     font-size: 14px;
 }
 .release_radar_main_div.compact .release_radar_release_li > div > .release_radar_song_info_div > div {
-    padding-left: 0px;
     font-size: 13px;
 }
 .release_radar_main_div.compact .release_radar_release_li > .release_radar_bottom_info_div {
     margin-top: 1px;
     font-size: 11px;
+}
+.release_radar_main_div.compact .release_radar_release_li a {
+    padding-right: 10px;
+}
+.release_radar_main_div.compact .release_radar_release_li > div > div.release_radar_img_container_div {
+    width: 40px;
+}
+.release_radar_main_div.no-image .release_radar_release_li > div > .release_radar_song_info_div {
+    max-width: 100%;
+}
+.release_radar_main_div.no-image .release_radar_release_li > div > .release_radar_song_info_div > a {
+    padding-left: 0px;
+}
+.release_radar_main_div.no-image .release_radar_release_li > div > .release_radar_song_info_div > div {
+    padding-left: 0px;
+}
+.release_radar_main_div.no-image .release_radar_release_li.is_favorite .release_radar_top_info_div {
+    padding-right: 7px;
+}
+.release_radar_main_div.no-image .release_radar_release_li.is_favorite .release_radar_top_info_div:after {
+    color: var(--tempo-colors-text-accent-primary-default);
+    content: "★";
+    position: absolute;
+    right: 0;
+}
+
+.release_radar_main_div.no-image .release_radar_release_li > div > div.release_radar_img_container_div {
+    display: none;
+}
+.release_radar_main_div.no-image .release_radar_release_li {
+    padding-top: 8px;
+}
+.release_radar_main_div.smallest .release_radar_release_li {
+    padding: 8px 8px 8px 16px;
+}
+.release_radar_main_div.smallest .release_radar_release_li > div > .release_radar_song_info_div {
+    flex-direction: row;
 }
 
 .filtered {
@@ -994,6 +1049,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
         release_li.className = "release_radar_release_li";
 
         const top_info_div = document.createElement("div");
+        top_info_div.className = "release_radar_top_info_div";
 
         const image_container_div = document.createElement("div");
         image_container_div.className = "release_radar_img_container_div";
@@ -1115,7 +1171,9 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
         }
 
         const artists_div = document.createElement("div");
+        artists_div.className = "release_radar_song_artists_div";
         artists_div.textContent = release.artists.map(a => a[0]).join(", ");
+        artists_div.title = artists_div.textContent;
 
         song_info_div.append(song_title_a, artists_div);
 
@@ -1238,7 +1296,6 @@ class Setting {
     }
 
     checkbox_setting(modify_value_callback=null, additional_callback=null) {
-        this.setting_label.style.alignItems = "center";
         const setting_input = document.createElement("input");
         setting_input.type = "checkbox";
         setting_input.checked = this.config_key_parent[this.config_key];
@@ -1286,9 +1343,7 @@ function create_main_div(wait_for_new_releases_promise) {
 
     const main_div = document.createElement("div");
     main_div.className = "release_radar_main_div";
-    if (config.compact_mode) {
-        main_div.classList.add("compact");
-    }
+    apply_compact_mode_class(main_div, config);
 
     const header_wrapper_div = document.createElement("div");
     header_wrapper_div.className = "release_radar_main_div_header_div";
@@ -1324,6 +1379,57 @@ function create_main_div(wait_for_new_releases_promise) {
         settings_wrapper = document.createElement("div");
         settings_wrapper.className = "release_radar_settings_wrapper_div";
 
+        const filter_releases = async (args) => {
+            const new_releases = await wait_for_new_releases_promise;
+            const all_releases = main_div.querySelectorAll("li.release_radar_release_li");
+            new_releases.forEach((release, i) => {
+                all_releases[i].classList.toggle("filtered", is_release_filtered(release));
+            });
+        }
+
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Albums",
+                "Include Albums",
+                config.types, "albums",
+                "span 1"
+            )).checkbox_setting(null, filter_releases)
+        );
+        settings_wrapper.appendChild(
+            (new Setting(
+                "EPs",
+                "Include EPs",
+                config.types, "eps",
+                "span 1"
+            )).checkbox_setting(null, filter_releases)
+        );
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Singles",
+                "Include Singles",
+                config.types, "singles",
+                "span 1"
+            )).checkbox_setting(null, filter_releases)
+        );
+
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Feat.",
+                "Include Features. This also includes albums by 'Various artists', to avoid this, blacklist that 'artist' with the ID (5080).",
+                config.types, "features",
+                "span 1"
+            )).checkbox_setting(null, filter_releases)
+        );
+
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Upcoming",
+                "How to handle upcoming releases. Only applies after a page reload.",
+                config.types, "upcoming_releases",
+                "span 2"
+            )).dropdown_setting(["Normal", "Separate", "Hide"])
+        );
+
         settings_wrapper.appendChild(
             (new Setting(
                 "Max. Songs",
@@ -1344,22 +1450,31 @@ function create_main_div(wait_for_new_releases_promise) {
 
         settings_wrapper.appendChild(
             (new Setting(
+                "Parallelism",
+                "How many artists are handled simultaneously. This has a high impact on the speed of fetching the releases. If you get ratelimited or frequent errors occur, turn this down.",
+                config, "simultaneous_artists",
+                "span 2"
+            )).number_setting()
+        );
+
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Density", // help i cant do compact bc its too wide
+                "Make everything more compact, allowing for more songs to be viewed at once.",
+                config, "compact_mode",
+                "span 2"
+            )).dropdown_setting(["Normal", "Compact", "No image", "Smallest"], null, function() {
+                apply_compact_mode_class(main_div, config);
+            })
+        );
+
+        settings_wrapper.appendChild(
+            (new Setting(
                 "Playlist",
                 "The ID of the playlist in which to store new songs in (the numbers in the url). Empty in order to not save. Songs only get added after a page reload.",
                 config, "playlist_id",
                 "span 2"
             )).number_setting((playlist_id) => playlist_id.trim() === "" ? null : parseInt(playlist_id).toString())
-        );
-
-        settings_wrapper.appendChild(
-            (new Setting(
-                "Dense", // help i cant do compact bc its too wide
-                "Make everything more compact, allowing for more songs to be viewed at once.",
-                config, "compact_mode",
-                "span 1"
-            )).checkbox_setting(null, (checked) => {
-                main_div.classList.toggle("compact", checked);
-            })
         );
 
         settings_wrapper.appendChild(
@@ -1373,67 +1488,6 @@ function create_main_div(wait_for_new_releases_promise) {
             })
         );
 
-        const filter_releases = async (args) => {
-            const new_releases = await wait_for_new_releases_promise;
-            const all_releases = main_div.querySelectorAll("li.release_radar_release_li");
-            new_releases.forEach((release, i) => {
-                all_releases[i].classList.toggle("filtered", is_release_filtered(release));
-            });
-        }
-
-        settings_wrapper.appendChild(
-            (new Setting(
-                "Feat.",
-                "Include Features. This also includes albums by 'Various artists', to avoid this, blacklist that 'artist' with the ID (5080).",
-                config.types, "features",
-                "span 1"
-            )).checkbox_setting(null, filter_releases)
-        );
-
-        settings_wrapper.appendChild(
-            (new Setting(
-                "Singles",
-                "Include Singles",
-                config.types, "singles",
-                "span 1"
-            )).checkbox_setting(null, filter_releases)
-        );
-
-        settings_wrapper.appendChild(
-            (new Setting(
-                "EPs",
-                "Include EPs",
-                config.types, "eps",
-                "span 1"
-            )).checkbox_setting(null, filter_releases)
-        );
-
-        settings_wrapper.appendChild(
-            (new Setting(
-                "Albums",
-                "Include Albums",
-                config.types, "albums",
-                "span 1"
-            )).checkbox_setting(null, filter_releases)
-        );
-
-        settings_wrapper.appendChild(
-            (new Setting(
-                "Upcoming",
-                "How to handle upcoming releases. Only applies after a page reload.",
-                config.types, "upcoming_releases",
-                "span 2"
-            )).dropdown_setting(["Normal", "Separate", "Hide"])
-        );
-
-        settings_wrapper.appendChild(
-            (new Setting(
-                "Parallelism",
-                "How many artists are handled simultaneously. This has a high impact on the speed of fetching the releases. If you get ratelimited or frequent errors occur, turn this down.",
-                config, "simultaneous_artists",
-                "span 2"
-            )).number_setting()
-        );
 
         settings_wrapper.appendChild(
             (new Setting(
