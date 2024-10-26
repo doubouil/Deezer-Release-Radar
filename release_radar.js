@@ -1094,6 +1094,7 @@ function create_new_releases_lis(new_releases, main_btn, wrapper_div, language) 
         const song_title_a = document.createElement("a");
         song_title_a.href = `${(config.open_in_app ? "deezer" : "https")}://www.deezer.com/${language}/album/${release.id}`;
         song_title_a.textContent = release.name;
+        song_title_a.title = song_title_a.textContent;
 
         song_title_a.onclick = (e) => {
             if (song_title_a.href.startsWith("deezer")) {
