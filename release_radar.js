@@ -787,6 +787,7 @@ function set_css() {
 .release_radar_main_div_header_div > div > label > input[type='checkbox'] {
     height: 20px;
     width: 20px;
+    accent-color: var(--tempo-colors-border-neutral-primary-focused);
 }
 
 .release_radar_upcoming_releases_details {
