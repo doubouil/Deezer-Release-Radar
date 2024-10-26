@@ -3,6 +3,8 @@
 // @namespace    Violentmonkey Scripts
 // @version      1.2.2
 // @author       Bababoiiiii
+// @grant GM_getValue
+// @grant GM_setValue
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
 // @match        https://www.deezer.com/*
@@ -479,8 +481,13 @@ function get_config() {
     const CURRENT_CONFIG_VERSION = 2;
 
     let config = localStorage.getItem("release_radar_config");
+    if( GM_getValue !== undefined ) {
+      config = GM_getValue('release_radar_config');
+    }
     if (config) {
-        config = JSON.parse(config);
+        if( config.length ) {
+           config = JSON.parse(config);
+        }
         if (config.config_version >= CURRENT_CONFIG_VERSION) {
             return config;
         }
@@ -514,7 +521,10 @@ function get_config() {
 }
 
 function set_config(data) {
-    localStorage.setItem("release_radar_config", JSON.stringify(data));;
+    localStorage.setItem("release_radar_config", JSON.stringify(data));
+    if( GM_setValue !== undefined ) {
+      GM_setValue('release_radar_config', data);
+    }
 }
 function apply_compact_mode_class(main_div, config) {
     main_div.classList.remove('compact');
