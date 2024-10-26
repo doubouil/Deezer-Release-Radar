@@ -1407,7 +1407,7 @@ function create_main_div(wait_for_new_releases_promise) {
                 "How to handle upcoming releases. Only applies after a page reload.",
                 config.types, "upcoming_releases",
                 "span 2"
-            )).dropdown_setting(["Normal", "Seperate", "Hide"])
+            )).dropdown_setting(["Normal", "Separate", "Hide"])
         );
 
         settings_wrapper.appendChild(
