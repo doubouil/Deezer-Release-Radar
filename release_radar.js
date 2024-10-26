@@ -397,7 +397,10 @@ function ajax_load(path) {
 
 
 function get_cache() {
-    let cache = GM_getValue('cache');
+    let cache = null;
+    if( GM_getValue !== undefined) {
+      cache = GM_getValue('cache');
+    }
     if( !cache ) {
        cache = localStorage.getItem("release_radar_cache");
       if( cache ) {
@@ -417,7 +420,9 @@ function get_cache() {
 }
 
 function set_cache(data) {
-    GM_setValue('cache', data);
+    if( GM_setValue !== undefined) {
+      GM_setValue('cache', data);
+    }
     localStorage.setItem("release_radar_cache", JSON.stringify(data));
 }
 
@@ -501,7 +506,7 @@ function get_config() {
     const CURRENT_CONFIG_VERSION = 1;
 
     let config = localStorage.getItem("release_radar_config");
-    if( GM_getValues !== undefined ) {
+    if( GM_getValues !== undefined && GM_listValues !== undefined ) {
       var keys = GM_listValues();
       if( keys.length ) {
         config = GM_getValues(keys);
@@ -1715,18 +1720,20 @@ async function main() {
             main_btn.classList.remove("adding_releases");
         }
         // Allow for cross tabs changes without using a BroadcastChannel
-        GM_addValueChangeListener("compact_mode", function(name, oldValue, newValue, fromOtherTab) {
-          if( oldValue !== newValue) {
-            log('Propagate change of compact_mode');
-            config.compact_mode = newValue;
-            if( main_div !== undefined ) {
-               apply_compact_mode_class(main_div, config);
+        if( GM_addValueChangeListener !== undefined ) {
+          GM_addValueChangeListener("compact_mode", function(name, oldValue, newValue, fromOtherTab) {
+            if( oldValue !== newValue) {
+              log('Propagate change of compact_mode');
+              config.compact_mode = newValue;
+              if( main_div !== undefined ) {
+                 apply_compact_mode_class(main_div, config);
+              }
+              if( document.getElementById('compact_mode').length ) {
+                document.getElementById('compact_mode').selectedIndex = newValue;
+              }
             }
-            if( document.getElementById('compact_mode').length ) {
-              document.getElementById('compact_mode').selectedIndex = newValue;
-            }
-          }
-        });
+          });
+        }
 
         log("UI initialized");
     }
