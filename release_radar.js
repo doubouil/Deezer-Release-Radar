@@ -392,13 +392,27 @@ function ajax_load(path) {
 
 
 function get_cache() {
-    const cache = localStorage.getItem("release_radar_cache");
-    return cache ? JSON.parse(cache) : {
+    let cache = GM_getValue('cache');
+    if( !cache ) {
+       cache = localStorage.getItem("release_radar_cache");
+      if( cache ) {
+        cache = JSON.parse(cache);
+      }
+    }
+    if( cache ) {
+      set_cache(cache);
+      return cache;
+    }
+    const default_cache = {
         has_seen: {}
     };
+    set_cache(default_cache);
+
+    return default_cache;
 }
 
 function set_cache(data) {
+    GM_setValue('cache', data);
     localStorage.setItem("release_radar_cache", JSON.stringify(data));
 }
 
@@ -1640,7 +1654,6 @@ async function main() {
     const api_token = user_data.results.checkForm;
 
     cache = get_cache();
-    if (!cache.has_seen) cache.has_seen = {}
 
     // use cache if cache for this user exists and if we havent checked that day
     if (cache[user_id] && is_after_utc_midnight(cache[user_id].last_checked) ) {
@@ -1698,8 +1711,7 @@ async function main() {
         }
         // Allow for cross tabs changes without using a BroadcastChannel
         GM_addValueChangeListener("compact_mode", function(name, oldValue, newValue, fromOtherTab) {
-          // log( 'GM_addValueChangeListener', name, oldValue, newValue, fromOtherTab );
-          if( name === "compact_mode" && oldValue !== newValue) {
+          if( oldValue !== newValue) {
             log('Propagate change of compact_mode');
             config.compact_mode = newValue;
             if( main_div !== undefined ) {
