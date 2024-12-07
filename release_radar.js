@@ -199,6 +199,11 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
                         is_favorite: release.node.isFavorite
                     };
 
+                    // If it's favorited, you must have already seen it
+                    if( new_release.is_favorite ) {
+                      cache.has_seen[new_release.id] = true;
+                    }
+
                     // stop requesting songs if the song is older than the age limit...
                     if (current_time - release.node.releaseDate > 1000 * 60 * 60 * 24 * config.max_song_age) {
                         next_page = null;
@@ -234,6 +239,7 @@ async function get_new_releases(auth_token, api_token, artist_ids) {
 
                     amount_of_songs_in_each_album_promises.push(amount_of_songs_in_album_promise);
                 }
+                set_cache(cache);
             }
         });
 
@@ -1631,7 +1637,7 @@ function create_main_btn(wrapper_div) {
 let ui_initialized = false;
 const config = get_config();
 let user_id;
-let cache;
+let cache = get_cache();
 
 main();
 
@@ -1662,8 +1668,6 @@ async function main() {
     user_id = user_data.results.USER.USER_ID;
 
     const api_token = user_data.results.checkForm;
-
-    cache = get_cache();
 
     // use cache if cache for this user exists and if we havent checked that day
     if (cache[user_id] && is_after_utc_midnight(cache[user_id].last_checked) ) {
