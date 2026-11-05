@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2.15
+// @version      1.2.16
 // @author       bertigert
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -325,7 +325,12 @@
                     }
                 }
                 const status_indicator_span = document.querySelector(".release_radar_status_indicator_span");
-                if (status_indicator_span) status_indicator_span.textContent = Math.floor(++artists_handled/artist_ids.length*100) + "%";
+                const pct = Math.floor(++artists_handled/artist_ids.length*100) + "%";
+                if (status_indicator_span) status_indicator_span.textContent = pct;
+                const last_checked_span = document.querySelector(".release_radar_last_checked_span");
+                if (last_checked_span && last_checked_span.classList.contains("loading")) {
+                    last_checked_span.textContent = `Currently updating... (${pct})`;
+                }
             });
 
             await Promise.all(batch_promises);
@@ -791,6 +796,7 @@
         css.type = "text/css";
         css.textContent = `
     .release_radar_main_btn {
+        position: relative;
         display: inline-flex;
         min-height: var(--tempo-sizes-size-m);
         min-width: var(--tempo-sizes-size-m);
@@ -806,45 +812,65 @@
     .release_radar_main_btn > svg > path {
         fill: currentcolor;
     }
+    .release_radar_main_btn.loading > svg {
+        animation: load_pulse 2s infinite ease-in-out;
+    }
 
     .release_radar_status_indicator_span {
         position: absolute;
-        transform: translateX(50%) translateY(-50%);
+        top: 2px;
+        right: 2px;
+        transform: translateX(30%) translateY(-30%);
         border-radius: var(--tempo-radii-full);
         display: flex;
-        min-width: 24px;
-        min-height: 24px;
+        min-width: 20px;
+        min-height: 20px;
         color: white;
         font-size: 10px;
         padding-top: 2px;
         padding-bottom: 2px;
-        padding-inline-start: 6px;
-        padding-inline-end: 6px;
+        padding-inline-start: 4px;
+        padding-inline-end: 4px;
         font-weight: var(--tempo-fontWeights-bold);
         align-items: center;
         justify-content: center;
+        pointer-events: none;
+    }
+    .release_radar_status_indicator_span:empty {
+        display: none;
     }
     .release_radar_main_btn.loading > span.release_radar_status_indicator_span {
+        display: flex;
         color: black;
         font-size: 9px;
-        height: 25px;
-        width: 25px;
+        height: 20px;
+        width: 20px;
+        min-width: 20px;
+        min-height: 20px;
         background-color: var(--tempo-colors-orange-300);
-        animation: load_pulse 2s infinite ease-in-out;
+        animation: load_pulse 1.5s infinite ease-in-out;
     }
     .release_radar_main_btn.adding_releases > span.release_radar_status_indicator_span {
+        display: flex;
         background-color: var(--tempo-colors-orange-500);
     }
     .release_radar_main_btn.has_new > span.release_radar_status_indicator_span {
+        display: flex;
         background-color: var(--tempo-colors-background-accent-primary-default);
     }
     @keyframes load_pulse {
         0%, 100% {
-            filter: brightness(0.5);
+            filter: brightness(0.7);
+            opacity: 0.8;
         }
         50% {
-            filter: brightness(1.5);
+            filter: brightness(1.4);
+            opacity: 1;
         }
+    }
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
 
     .release_radar_wrapper_div {
@@ -879,6 +905,10 @@
         color: var(--tempo-colors-text-neutral-secondary-default);
         border-bottom: 1px solid var(--tempo-colors-divider-neutral-primary-default);
     }
+    .release_radar_wrapper_div.loading .release_radar_main_div:not(:has(*)):after {
+        content: "Scanning for new releases...";
+        animation: load_pulse 2s infinite ease-in-out;
+    }
 
     .release_radar_main_div_arrow {
         width: 0;
@@ -906,6 +936,10 @@
     }
     .release_radar_main_div_header_div > button:hover {
         transform: scale(1.2);
+    }
+    .release_radar_main_div_header_div > button.spinning {
+        animation: spin 1s linear infinite;
+        pointer-events: none;
     }
 
     .release_radar_settings_wrapper_div {
@@ -1145,9 +1179,31 @@
     }
 
     .release_radar_last_checked_span {
+        display: flex;
+        align-items: center;
+        gap: 6px;
         font-size: 11px;
         color: var(--color-light-grey-800);
         padding: 5px 15px;
+    }
+    .release_radar_last_checked_span.loading::before {
+        content: "";
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background-color: var(--tempo-colors-orange-400, #ff7200);
+        animation: pulse_dot 1.2s infinite ease-in-out;
+    }
+    @keyframes pulse_dot {
+        0%, 100% {
+            opacity: 0.3;
+            transform: scale(0.8);
+        }
+        50% {
+            opacity: 1;
+            transform: scale(1.2);
+        }
     }
 
 
@@ -1841,9 +1897,11 @@
         }
 
         const reload_button = document.createElement("button");
+        reload_button.className = "release_radar_reload_btn";
         reload_button.textContent = "\u27F3";
         reload_button.title = "Scan for new songs. This reloads the page. Use after changing a setting or if something broke.";
         reload_button.onclick = () => {
+            reload_button.classList.add("spinning");
             debug("Clearing cache and reloading");
             cache[user_data.user_id].new_releases = [];
             if (config.limits.max_song_age >= 0) cache[user_data.user_id].last_checked = 0; // if the max age is -1, we check if the song is newer than the last check, which would result in max requests for every artist if the last_checked is 0
@@ -1890,10 +1948,17 @@
         main_btn.onclick = () => {
             const is_closed = wrapper_div.classList.toggle("hide");
             if (!is_closed) {
-                if (cache[user_data.user_id]?.last_checked && cache[user_data.user_id]?.last_checked !== 0) {
+                if (main_btn.classList.contains("loading")) {
+                    const status_span = main_btn.querySelector(".release_radar_status_indicator_span");
+                    const pct = status_span?.textContent;
+                    last_checked_span.textContent = pct ? `Currently updating... (${pct})` : "Currently updating...";
+                    last_checked_span.classList.add("loading");
+                } else if (cache[user_data.user_id]?.last_checked && cache[user_data.user_id]?.last_checked !== 0) {
                     last_checked_span.textContent = `Last Update - ${time_ago(cache[user_data.user_id].last_checked)}`;
+                    last_checked_span.classList.remove("loading");
                 } else {
                     last_checked_span.textContent = "Currently updating...";
+                    last_checked_span.classList.add("loading");
                 }
             }
         }
@@ -1982,6 +2047,15 @@
             const [wrapper_div, main_div] = create_main_div(wait_for_new_releases_promise);
             const [parent_div, main_btn] = create_main_btn(wrapper_div);
 
+            wrapper_div.classList.add("loading");
+            const reload_button = wrapper_div.querySelector("button.release_radar_reload_btn");
+            if (reload_button) reload_button.classList.add("spinning");
+            const last_checked_span = wrapper_div.querySelector("span.release_radar_last_checked_span");
+            if (last_checked_span) {
+                last_checked_span.textContent = "Currently updating...";
+                last_checked_span.classList.add("loading");
+            }
+
             parent_div.append(wrapper_div);
             parent.querySelectorAll("button.popper-wrapper.topbar-action").forEach(e => e.addEventListener("click", (e) => {wrapper_div.classList.add("hide")} ))
             parent.insertBefore(parent_div, parent.querySelector("button.popper-wrapper.topbar-action"));
@@ -1992,12 +2066,26 @@
 
             const new_releases_divs = create_new_releases_lis(new_releases, main_btn);
             main_div.append(...new_releases_divs);
+            wrapper_div.classList.remove("loading");
             main_btn.classList.remove("loading");
+            if (reload_button) reload_button.classList.remove("spinning");
+            if (last_checked_span && cache[user_data.user_id]?.last_checked) {
+                last_checked_span.textContent = `Last Update - ${time_ago(cache[user_data.user_id].last_checked)}`;
+                last_checked_span.classList.remove("loading");
+            }
             if (config.playlist.id) {
                 log("Beginning adding songs to playlist", config.playlist.id);
                 main_btn.classList.add("adding_releases");
+                if (last_checked_span) {
+                    last_checked_span.textContent = "Adding songs to playlist...";
+                    last_checked_span.classList.add("loading");
+                }
                 await add_new_releases_to_playlist(config.playlist.id, new_releases);
                 main_btn.classList.remove("adding_releases");
+                if (last_checked_span && cache[user_data.user_id]?.last_checked) {
+                    last_checked_span.textContent = `Last Update - ${time_ago(cache[user_data.user_id].last_checked)}`;
+                    last_checked_span.classList.remove("loading");
+                }
             }
 
             log("UI initialized");
