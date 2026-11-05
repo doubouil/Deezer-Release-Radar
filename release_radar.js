@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2.16
+// @version      1.2.17
 // @author       bertigert
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -257,7 +257,7 @@
                     [releases, next_page, cursor] = result;
 
                     for (let release of releases) {
-                        release.node.releaseDate = new Date(release.node.releaseDate).getTime();
+                        release.node.releaseDate = parse_release_date(release.node.releaseDate);
 
                         const new_release = {
                             from_artist: artist_id,
@@ -730,6 +730,16 @@
             "single": "Single",
             "album": "Album"
         })[word.toLowerCase()]
+    }
+
+    function parse_release_date(date_str) {
+        if (!date_str) return 0;
+        if (typeof date_str === "number") return date_str;
+        if (typeof date_str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date_str)) {
+            const [year, month, day] = date_str.split("-").map(Number);
+            return new Date(year, month - 1, day).getTime();
+        }
+        return new Date(date_str).getTime();
     }
 
     function time_ago(unix_timestamp, capitalize=false) {
