@@ -1,11 +1,14 @@
 ﻿// ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2.17
+// @version      1.2.18
 // @author       bertigert
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
 // @match        https://www.deezer.com/*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
 // ==/UserScript==
 
 (function() {
@@ -529,10 +532,70 @@
         deezer_ajax_history.push(path);
     }
 
+    function storage_get(key, fallback = null) {
+        try {
+            if (typeof GM_getValue === "function") {
+                const gm_val = GM_getValue(key, null);
+                if (gm_val !== null && gm_val !== undefined) {
+                    return typeof gm_val === "string" ? JSON.parse(gm_val) : gm_val;
+                }
+            }
+        } catch (e) {
+            debug("GM_getValue error", e);
+        }
+
+        try {
+            const local_val = localStorage.getItem(key);
+            if (local_val !== null && local_val !== undefined) {
+                const parsed = JSON.parse(local_val);
+                try {
+                    if (typeof GM_setValue === "function") {
+                        GM_setValue(key, JSON.stringify(parsed));
+                    }
+                } catch (e) {}
+                return parsed;
+            }
+        } catch (e) {
+            debug("localStorage.getItem error", e);
+        }
+
+        return fallback;
+    }
+
+    function storage_set(key, value) {
+        const json_str = JSON.stringify(value);
+        try {
+            if (typeof GM_setValue === "function") {
+                GM_setValue(key, json_str);
+            }
+        } catch (e) {
+            debug("GM_setValue error", e);
+        }
+        try {
+            localStorage.setItem(key, json_str);
+        } catch (e) {
+            debug("localStorage.setItem error", e);
+        }
+    }
+
+    function storage_remove(key) {
+        try {
+            if (typeof GM_deleteValue === "function") {
+                GM_deleteValue(key);
+            }
+        } catch (e) {
+            debug("GM_deleteValue error", e);
+        }
+        try {
+            localStorage.removeItem(key);
+        } catch (e) {
+            debug("localStorage.removeItem error", e);
+        }
+    }
 
     function get_cache() {
-        const cache = localStorage.getItem("release_radar_cache");
-        return cache ? JSON.parse(cache) : {
+        const cache = storage_get("release_radar_cache");
+        return cache ? cache : {
             has_seen: {}
         };
     }
@@ -551,7 +614,7 @@
             }
         }
 
-        localStorage.setItem("release_radar_cache", JSON.stringify(data));
+        storage_set("release_radar_cache", data);
     }
 
     class StringConfig {
@@ -661,15 +724,16 @@
     function get_config() {
         const CURRENT_CONFIG_VERSION = 6;
 
-        let config = localStorage.getItem("release_radar_config");
+        let config = storage_get("release_radar_config");
         if (config) {
-            config = JSON.parse(config);
             if (config.config_version >= CURRENT_CONFIG_VERSION) {
                 return config;
             }
 
             log(`Migrating config from version ${config.config_version} to ${CURRENT_CONFIG_VERSION}.`);
-            return migrate_config(config, CURRENT_CONFIG_VERSION);
+            const migrated = migrate_config(config, CURRENT_CONFIG_VERSION);
+            storage_set("release_radar_config", migrated);
+            return migrated;
         }
 
         log("No config found, creating new");
@@ -708,7 +772,7 @@
     }
 
     function set_config(data) {
-        localStorage.setItem("release_radar_config", JSON.stringify(data));;
+        storage_set("release_radar_config", data);
     }
 
     function singularize(word) { // https://stackoverflow.com/questions/57429677/javascript-make-a-word-singular-singularize
@@ -1897,7 +1961,7 @@
                 null, null,
                 "span 2"
             )).button_setting("\u2716", () => {
-                localStorage.removeItem("release_radar_config");
+                storage_remove("release_radar_config");
             })
         );
 

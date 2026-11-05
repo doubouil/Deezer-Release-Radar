@@ -25,7 +25,8 @@ Due to a bug in the Deezer API, some artists are bugged and dont return releases
 - Highly configurable
 - Scans for new artists every day, songs on deezer get released at midnight UTC (idk tbh)
 - Allows you to play songs directly from within the radar, view the cover images in 1920x1920 resolution, supports ajax loading of releases
-- Note: When launching for the first time, all songs are considered new. It uses localstorage for cache and config.
+- Supports automatic cross-machine synchronization via userscript manager cloud sync (Google Drive, Dropbox, OneDrive, WebDAV) and clipboard import/export
+- Note: When launching for the first time, all songs are considered new. Uses userscript storage (`GM_setValue`/`GM_getValue`) with `localStorage` fallback for seamless sync and caching.
 
 ## Links
 [Greazyfork](https://greasyfork.org/en/scripts/510955-deezer-release-radar)\
