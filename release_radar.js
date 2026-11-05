@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2.18
+// @version      1.2.19
 // @author       bertigert
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -1506,7 +1506,7 @@
 
                     if (amount_new_songs <= 0) {
                         main_btn.classList.remove("has_new");
-                        amount_songs_span.remove(); // we wont need it anymore as we reload the page to udpate songs
+                        if (amount_songs_span) amount_songs_span.textContent = "";
                     }
 
                     cache.has_seen[release.id] = release.release_date;
@@ -1569,7 +1569,8 @@
         }
 
         if (amount_new_songs <= 0) {
-            amount_songs_span.remove();
+            main_btn.classList.remove("has_new");
+            if (amount_songs_span) amount_songs_span.textContent = "";
         }
 
         releases_to_be_returned.push(...past_releases_lis);
@@ -1666,7 +1667,7 @@
     }
 
 
-    function create_main_div(wait_for_new_releases_promise) {
+    function create_main_div() {
         const wrapper_div = document.createElement("div");
         wrapper_div.className = "release_radar_wrapper_div hide";
 
@@ -1692,8 +1693,7 @@
         mark_all_as_seen_button.textContent = "\u2713";
         mark_all_as_seen_button.title = "Mark all releases as seen.";
         mark_all_as_seen_button.onclick = async () => {
-            const new_releases = await wait_for_new_releases_promise;
-            for (let new_release of new_releases) {
+            for (let new_release of current_releases) {
                 cache.has_seen[new_release.id] = new_release.release_date;
                 set_cache(cache);
             }
@@ -1705,10 +1705,11 @@
         settings_button.title = "Settings";
 
         const filter_releases = async (args) => {
-            const new_releases = await wait_for_new_releases_promise;
             const all_releases = main_div.querySelectorAll("li.release_radar_release_li");
-            new_releases.forEach((release, i) => {
-                all_releases[i].classList.toggle("hide", is_release_filtered(release));
+            current_releases.forEach((release, i) => {
+                if (all_releases[i]) {
+                    all_releases[i].classList.toggle("hide", is_release_filtered(release));
+                }
             });
 
             // if all the upcoming releases are filtered out, hide the details element
@@ -1803,16 +1804,14 @@
                 "span 2"
             )).checkbox_setting(null, (checked) => {
                 if (checked) {
-                    wait_for_new_releases_promise.then(new_releases => {
-                        for (let release of new_releases) {
-                            if (release.is_favorite) {
-                                cache.has_seen[release.id] = release.release_date;
-                            }
+                    for (let release of current_releases) {
+                        if (release.is_favorite) {
+                            cache.has_seen[release.id] = release.release_date;
                         }
-                        set_cache(cache);
-                        main_div.querySelectorAll("li.release_radar_release_li.is_favorite.is_new").forEach(e => {
-                            if (e.onmouseover) e.onmouseover();
-                        });
+                    }
+                    set_cache(cache);
+                    main_div.querySelectorAll("li.release_radar_release_li.is_favorite.is_new").forEach(e => {
+                        if (e.onmouseover) e.onmouseover();
                     });
                 }
             })
@@ -1848,7 +1847,7 @@
         settings_wrapper.appendChild(
             (new Setting(
                 "Playlist",
-                "The ID of the playlist in which to store new songs in (the numbers in the url). Empty in order to not save. Songs only get added after a page reload.",
+                "The ID of the playlist in which to store new songs in (the numbers in the url). Empty in order to not save. Songs get added when scanning for new releases.",
                 config.playlist, "id",
                 "1 / span 2"
             )).number_setting((playlist_id) => playlist_id.trim() === "" ? null : parseInt(playlist_id).toString())
@@ -1973,14 +1972,16 @@
         const reload_button = document.createElement("button");
         reload_button.className = "release_radar_reload_btn";
         reload_button.textContent = "\u27F3";
-        reload_button.title = "Scan for new songs. This reloads the page. Use after changing a setting or if something broke.";
-        reload_button.onclick = () => {
-            reload_button.classList.add("spinning");
-            debug("Clearing cache and reloading");
-            cache[user_data.user_id].new_releases = [];
-            if (config.limits.max_song_age >= 0) cache[user_data.user_id].last_checked = 0; // if the max age is -1, we check if the song is newer than the last check, which would result in max requests for every artist if the last_checked is 0
-            set_cache(cache);
-            location.reload();
+        reload_button.title = "Scan for new songs. Use after changing a setting or to refresh releases.";
+        reload_button.onclick = async () => {
+            if (is_scanning) return;
+            debug("Rescanning for new releases");
+            if (user_data.user_id && cache[user_data.user_id]) {
+                cache[user_data.user_id].new_releases = [];
+                if (config.limits.max_song_age >= 0) cache[user_data.user_id].last_checked = 0; // if the max age is -1, we check if the song is newer than the last check, which would result in max requests for every artist if the last_checked is 0
+                set_cache(cache);
+            }
+            await scan_releases(true);
         }
 
         header_wrapper_div.append(header_span, mark_all_as_seen_button, reload_button, settings_button, settings_wrapper);
@@ -2045,13 +2046,151 @@
     const config = get_config();
     const user_data = {};
     let cache;
+    let current_releases = [];
+    let is_scanning = false;
+    let ui_elements = null;
 
     main();
 
-    async function main() {
+    async function scan_releases(force = false) {
+        if (is_scanning) return;
+        is_scanning = true;
+
+        if (ui_elements) {
+            ui_elements.wrapper_div.classList.add("loading");
+            ui_elements.main_btn.classList.add("loading");
+            ui_elements.main_btn.classList.remove("has_new");
+            if (ui_elements.status_indicator_span) ui_elements.status_indicator_span.textContent = "0%";
+            if (ui_elements.reload_button) ui_elements.reload_button.classList.add("spinning");
+            if (ui_elements.last_checked_span) {
+                ui_elements.last_checked_span.textContent = "Currently updating... (0%)";
+                ui_elements.last_checked_span.classList.add("loading");
+            }
+            ui_elements.main_div.replaceChildren();
+        }
+
+        if (!user_data.user_id) {
+            log("Getting user data");
+            const user_data_tmp = await get_user_data();
+            user_data.language = user_data_tmp.results.SETTING_LANG;
+            user_data.user_id = user_data_tmp.results.USER.USER_ID;
+            user_data.api_token = user_data_tmp.results.checkForm;
+            user_data.currently_renewing_api_token = null;
+            user_data.session_id = user_data_tmp.results.SESSION_ID;
+            user_data.user_token = user_data_tmp.results.USER_TOKEN;
+            user_data.license_token = user_data_tmp.results.USER.OPTIONS.license_token;
+        }
+
+        cache = get_cache();
+        if (!cache.has_seen) cache.has_seen = {};
+
         let new_releases;
-        let resolve_wait_for_new_releases_promise;
-        let wait_for_new_releases_promise = new Promise(resolve => resolve_wait_for_new_releases_promise = resolve);
+        // use cache if not forced, if cache for this user exists and if we havent checked that day
+        if (!force && cache[user_data.user_id] && is_after_local_midnight(cache[user_data.user_id].last_checked)) {
+            log("Checked earlier, using cache");
+            new_releases = cache[user_data.user_id].new_releases;
+        } else {
+            log("Getting followed artists");
+            const artist_ids = await get_all_followed_artists();
+
+            log("Authenticating");
+            const auth_token = await get_auth_token();
+
+            log("Getting new releases");
+            new_releases = await get_new_releases(auth_token, artist_ids);
+
+            cache[user_data.user_id] = {
+                last_checked: Date.now(),
+                new_releases: new_releases
+            };
+            set_cache(cache);
+        }
+
+        current_releases = new_releases;
+        log(new_releases);
+
+        if (ui_elements) {
+            ui_elements.main_div.replaceChildren();
+            const new_releases_divs = create_new_releases_lis(new_releases, ui_elements.main_btn);
+            ui_elements.main_div.append(...new_releases_divs);
+            ui_elements.wrapper_div.classList.remove("loading");
+            ui_elements.main_btn.classList.remove("loading");
+            if (ui_elements.reload_button) ui_elements.reload_button.classList.remove("spinning");
+            if (ui_elements.last_checked_span && cache[user_data.user_id]?.last_checked) {
+                ui_elements.last_checked_span.textContent = `Last Update - ${time_ago(cache[user_data.user_id].last_checked)}`;
+                ui_elements.last_checked_span.classList.remove("loading");
+            }
+            if (config.playlist.id) {
+                log("Beginning adding songs to playlist", config.playlist.id);
+                ui_elements.main_btn.classList.add("adding_releases");
+                if (ui_elements.last_checked_span) {
+                    ui_elements.last_checked_span.textContent = "Adding songs to playlist...";
+                    ui_elements.last_checked_span.classList.add("loading");
+                }
+                await add_new_releases_to_playlist(config.playlist.id, new_releases);
+                ui_elements.main_btn.classList.remove("adding_releases");
+                if (ui_elements.last_checked_span && cache[user_data.user_id]?.last_checked) {
+                    ui_elements.last_checked_span.textContent = `Last Update - ${time_ago(cache[user_data.user_id].last_checked)}`;
+                    ui_elements.last_checked_span.classList.remove("loading");
+                }
+            }
+        }
+
+        is_scanning = false;
+        return new_releases;
+    }
+
+    function create_ui(parent) {
+        if (ui_initialized) {
+            return;
+        }
+        ui_initialized = true;
+        log("Parent found");
+        set_css();
+
+        const [wrapper_div, main_div] = create_main_div();
+        const [parent_div, main_btn] = create_main_btn(wrapper_div);
+
+        const reload_button = wrapper_div.querySelector("button.release_radar_reload_btn");
+        const last_checked_span = wrapper_div.querySelector("span.release_radar_last_checked_span");
+        const status_indicator_span = main_btn.querySelector(".release_radar_status_indicator_span");
+
+        ui_elements = {
+            wrapper_div,
+            main_div,
+            main_btn,
+            reload_button,
+            last_checked_span,
+            status_indicator_span
+        };
+
+        if (is_scanning) {
+            wrapper_div.classList.add("loading");
+            main_btn.classList.add("loading");
+            if (reload_button) reload_button.classList.add("spinning");
+            if (last_checked_span) {
+                last_checked_span.textContent = "Currently updating...";
+                last_checked_span.classList.add("loading");
+            }
+        } else if (current_releases.length > 0) {
+            const new_releases_divs = create_new_releases_lis(current_releases, main_btn);
+            main_div.append(...new_releases_divs);
+            wrapper_div.classList.remove("loading");
+            main_btn.classList.remove("loading");
+            if (reload_button) reload_button.classList.remove("spinning");
+            if (last_checked_span && cache[user_data.user_id]?.last_checked) {
+                last_checked_span.textContent = `Last Update - ${time_ago(cache[user_data.user_id].last_checked)}`;
+                last_checked_span.classList.remove("loading");
+            }
+        }
+
+        parent_div.append(wrapper_div);
+        parent.querySelectorAll("button.popper-wrapper.topbar-action").forEach(e => e.addEventListener("click", (e) => {wrapper_div.classList.add("hide")} ))
+        parent.insertBefore(parent_div, parent.querySelector("button.popper-wrapper.topbar-action"));
+        log("UI initialized");
+    }
+
+    async function main() {
         let parent_div = document.body.querySelector("#page_topbar");
         if (parent_div) {
             create_ui(parent_div);
@@ -2071,98 +2210,6 @@
             observer.observe(document.body, {childList: true, subtree: true});
         }
 
-        log("Getting user data");
-        const user_data_tmp = await get_user_data();
-        user_data.language = user_data_tmp.results.SETTING_LANG;
-        user_data.user_id = user_data_tmp.results.USER.USER_ID;
-        user_data.api_token = user_data_tmp.results.checkForm;
-        user_data.currently_renewing_api_token = null;
-        user_data.session_id = user_data_tmp.results.SESSION_ID;
-        user_data.user_token = user_data_tmp.results.USER_TOKEN;
-        user_data.license_token = user_data_tmp.results.USER.OPTIONS.license_token;
-
-        cache = get_cache();
-        if (!cache.has_seen) cache.has_seen = {};
-
-        // use cache if cache for this user exists and if we havent checked that day
-        if (cache[user_data.user_id] && is_after_local_midnight(cache[user_data.user_id].last_checked) ) {
-            log("Checked earlier, using cache");
-            new_releases = cache[user_data.user_id].new_releases;
-            resolve_wait_for_new_releases_promise(new_releases);
-        } else {
-            log("Getting followed artists");
-            const artist_ids = await get_all_followed_artists();
-
-            log("Authenticating");
-            const auth_token = await get_auth_token();
-
-            log("Getting new releases")
-            new_releases = await get_new_releases(auth_token, artist_ids);
-            resolve_wait_for_new_releases_promise(new_releases);
-
-            cache[user_data.user_id] = {
-                last_checked: Date.now(),
-                new_releases: new_releases
-            }
-            set_cache(cache);
-        }
-
-        log(new_releases);
-
-
-        async function create_ui(parent) {
-            if (ui_initialized) {
-                return;
-            }
-            ui_initialized = true;
-            log("Parent found");
-            set_css();
-
-            const [wrapper_div, main_div] = create_main_div(wait_for_new_releases_promise);
-            const [parent_div, main_btn] = create_main_btn(wrapper_div);
-
-            wrapper_div.classList.add("loading");
-            const reload_button = wrapper_div.querySelector("button.release_radar_reload_btn");
-            if (reload_button) reload_button.classList.add("spinning");
-            const last_checked_span = wrapper_div.querySelector("span.release_radar_last_checked_span");
-            if (last_checked_span) {
-                last_checked_span.textContent = "Currently updating...";
-                last_checked_span.classList.add("loading");
-            }
-
-            parent_div.append(wrapper_div);
-            parent.querySelectorAll("button.popper-wrapper.topbar-action").forEach(e => e.addEventListener("click", (e) => {wrapper_div.classList.add("hide")} ))
-            parent.insertBefore(parent_div, parent.querySelector("button.popper-wrapper.topbar-action"));
-
-            log("Waiting for data");
-            await wait_for_new_releases_promise;
-            log("Got data");
-
-            const new_releases_divs = create_new_releases_lis(new_releases, main_btn);
-            main_div.append(...new_releases_divs);
-            wrapper_div.classList.remove("loading");
-            main_btn.classList.remove("loading");
-            if (reload_button) reload_button.classList.remove("spinning");
-            if (last_checked_span && cache[user_data.user_id]?.last_checked) {
-                last_checked_span.textContent = `Last Update - ${time_ago(cache[user_data.user_id].last_checked)}`;
-                last_checked_span.classList.remove("loading");
-            }
-            if (config.playlist.id) {
-                log("Beginning adding songs to playlist", config.playlist.id);
-                main_btn.classList.add("adding_releases");
-                if (last_checked_span) {
-                    last_checked_span.textContent = "Adding songs to playlist...";
-                    last_checked_span.classList.add("loading");
-                }
-                await add_new_releases_to_playlist(config.playlist.id, new_releases);
-                main_btn.classList.remove("adding_releases");
-                if (last_checked_span && cache[user_data.user_id]?.last_checked) {
-                    last_checked_span.textContent = `Last Update - ${time_ago(cache[user_data.user_id].last_checked)}`;
-                    last_checked_span.classList.remove("loading");
-                }
-            }
-
-            log("UI initialized");
-        }
+        await scan_releases();
     }
 })();
