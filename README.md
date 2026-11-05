@@ -21,6 +21,7 @@ Due to a bug in the Deezer API, some artists are bugged and dont return releases
 - Allows you to blacklist artists using their ID
 - Allows you to open the releases in the desktop app
 - Allows you to consider favorited releases as already seen
+- Allows you to filter out releases with identified AI-generated content
 - Highly configurable
 - Scans for new artists every day, songs on deezer get released at midnight UTC (idk tbh)
 - Allows you to play songs directly from within the radar, view the cover images in 1920x1920 resolution, supports ajax loading of releases

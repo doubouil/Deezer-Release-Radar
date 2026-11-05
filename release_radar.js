@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Deezer Release Radar
 // @namespace    Violentmonkey Scripts
-// @version      1.2.14
+// @version      1.2.15
 // @author       bertigert
 // @description  Adds a new button on the deezer page allowing you to see new releases of artists you follow.
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=deezer.com
@@ -190,6 +190,7 @@
                         type
                         releaseDate
                         isFavorite
+                        hasIdentifiedAIContent
                         cover {
                             ...PictureSmall
                         }
@@ -267,7 +268,8 @@
                             release_date: release.node.releaseDate,
                             is_feature: config.types.features && release.node.contributors.edges.some(e => ( e.node.id === artist_id && e.roles.includes("FEATURED") ) || e.node.id === "5080") , // 5080 = Various artists
                             type: release.node.type,
-                            is_favorite: release.node.isFavorite
+                            is_favorite: release.node.isFavorite,
+                            has_identified_ai_content: Boolean(release.node.hasIdentifiedAIContent)
                         };
 
                         // stop requesting songs if the song is older than the age limit...
@@ -411,6 +413,9 @@
         if (config.favorite_as_seen) {
             new_releases = new_releases.filter(r => !r.is_favorite);
         }
+        if (config.filter_ai) {
+            new_releases = new_releases.filter(r => !r.has_identified_ai_content);
+        }
         new_releases = new_releases.filter(r => !cache.has_seen[r.id]);
         if (new_releases.length === 0) {
             log("No new songs");
@@ -498,7 +503,8 @@
     }
 
     function is_release_filtered(release, current_time=Date.now()) {
-        return  !config.types.features && release.is_feature || // filter features
+        return  (config.filter_ai && release.has_identified_ai_content) || // filter AI
+                !config.types.features && release.is_feature || // filter features
                 !config.types.singles && release.type === "SINGLES" || // filter singles
                 !config.types.albums && release.type === "ALBUM" || // filter albums
                 !config.types.eps && release.type === "EP" || // filter EPs
@@ -621,6 +627,9 @@
             ],
             [
                 [null, "favorite_as_seen", false]
+            ],
+            [
+                [null, "filter_ai", false]
             ]
         ]
 
@@ -645,7 +654,7 @@
     }
 
     function get_config() {
-        const CURRENT_CONFIG_VERSION = 5;
+        const CURRENT_CONFIG_VERSION = 6;
 
         let config = localStorage.getItem("release_radar_config");
         if (config) {
@@ -667,6 +676,7 @@
             },
             open_in_app: false,
             favorite_as_seen: false,
+            filter_ai: false,
             playlist: {
                 id: null,
                 filter_duplicate_isrc: false,
@@ -1104,6 +1114,20 @@
         background-color: var(--color-light-grey-700);
         border-radius: 2px;
     }
+    .release_radar_release_li.has_ai .release_radar_top_info_div > a::after {
+        content: "AI";
+        position: absolute;
+        right: 0;
+        padding: 3px;
+        height: 20px;
+        font-size: 11px;
+        color: black;
+        background-color: var(--color-light-grey-700);
+        border-radius: 2px;
+    }
+    .release_radar_release_li.is_feature.has_ai .release_radar_top_info_div > a::after {
+        content: "f. AI";
+    }
     .release_radar_release_li.is_favorite .release_radar_img_container_div > img {
         border-color: var(--tempo-colors-text-accent-primary-default);
         cursor: pointer;
@@ -1316,6 +1340,10 @@
             if (release.is_feature) {
                 release_li.classList.add("is_feature");
                 song_title_a.title += " - The artist is featured in at least one of the songs of this release."
+            }
+            if (release.has_identified_ai_content) {
+                release_li.classList.add("has_ai");
+                song_title_a.title += " - Contains identified AI-generated content."
             }
             if (release.is_favorite) {
                 release_li.classList.add("is_favorite");
@@ -1642,7 +1670,7 @@
                 "Fav. Seen",
                 "Consider favorited releases as already seen.",
                 config, "favorite_as_seen",
-                "span 3"
+                "span 2"
             )).checkbox_setting(null, (checked) => {
                 if (checked) {
                     wait_for_new_releases_promise.then(new_releases => {
@@ -1658,6 +1686,15 @@
                     });
                 }
             })
+        );
+
+        settings_wrapper.appendChild(
+            (new Setting(
+                "Filter AI",
+                "Filter out releases containing identified AI-generated content.",
+                config, "filter_ai",
+                "span 1"
+            )).checkbox_setting(null, filter_releases)
         );
 
         settings_wrapper.appendChild(
